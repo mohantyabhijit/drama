@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AudioLines,
-  BookOpen,
   Headphones,
   Languages,
   Loader2,
   Mic,
   PanelLeftOpen,
   PhoneOff,
+  Plus,
   Send,
   Users,
   X,
@@ -79,7 +79,7 @@ type CouncilHomeProps = {
 };
 
 const FRIEND_THINK_DELAYS_MS = [760, 1080, 1360, 1660, 1960];
-const DEMO_USER_ID = "drama-local-dev-user";
+const LEGACY_SHARED_USER_ID = "drama-local-dev-user";
 const USER_PARTICIPANT = {
   id: "user",
   name: "You",
@@ -96,8 +96,17 @@ function createFriendPrepMap(
 
 function getOrCreateLocalUserId(): string {
   const storageKey = "drama.localUserId";
-  window.localStorage.setItem(storageKey, DEMO_USER_ID);
-  return DEMO_USER_ID;
+  const existingUserId = window.localStorage.getItem(storageKey);
+  if (existingUserId && existingUserId !== LEGACY_SHARED_USER_ID) {
+    return existingUserId;
+  }
+
+  const newUserId =
+    typeof window.crypto.randomUUID === "function"
+      ? `drama-user-${window.crypto.randomUUID()}`
+      : `drama-user-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  window.localStorage.setItem(storageKey, newUserId);
+  return newUserId;
 }
 
 function App() {
@@ -389,12 +398,34 @@ function App() {
     let activeSession: DramaSession;
     try {
       activeSession = await ensureActiveSession(question);
-      const savedEvent = await appendSessionEvent({
-        userId: friendsUserId,
-        sessionId: activeSession.id,
-        speakerType: "user",
-        content: question,
-      });
+      let savedEvent: SessionEvent;
+      try {
+        savedEvent = await appendSessionEvent({
+          userId: friendsUserId,
+          sessionId: activeSession.id,
+          speakerType: "user",
+          content: question,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (!message.toLowerCase().includes("active session not found")) {
+          throw error;
+        }
+
+        activeSession = await createSession({
+          userId: friendsUserId,
+          originalQuestion: question,
+        });
+        setSelectedSession(activeSession);
+        setSessionEvents([]);
+        setSessions((current) => [activeSession, ...current]);
+        savedEvent = await appendSessionEvent({
+          userId: friendsUserId,
+          sessionId: activeSession.id,
+          speakerType: "user",
+          content: question,
+        });
+      }
       setSessionEvents((current) => [...current, savedEvent]);
       const updatedSession = {
         ...activeSession,
@@ -759,15 +790,28 @@ function CouncilHome({
             <span>D</span>
             D.R.A.M.A.
           </a>
-          <p>
-            {selectedSession?.status === "ended"
-              ? "Remembered"
-              : isCouncilThinking
-                ? "Council preparing"
-                : activeVoiceAgentId
-                  ? "Live voice"
-                  : "Voice Council"}
-          </p>
+          <div className="home-topbar-actions">
+            <p>
+              {selectedSession?.status === "ended"
+                ? "Remembered"
+                : isCouncilThinking
+                  ? "Council preparing"
+                  : activeVoiceAgentId
+                    ? "Live voice"
+                    : "Voice Council"}
+            </p>
+            {selectedSession?.status === "ended" ? (
+              <button
+                className="new-session-button"
+                type="button"
+                onClick={handleCreateSession}
+                disabled={isSessionLoading}
+              >
+                <Plus size={16} aria-hidden="true" />
+                New Talk
+              </button>
+            ) : null}
+          </div>
         </header>
 
         {isViewingArchive ? (
@@ -784,20 +828,26 @@ function CouncilHome({
               activeVoiceAgentId={activeVoiceAgentId}
               isArchived={false}
               isConnectingVoice={isConnectingVoice}
+              onEndLiveSession={onEndLiveSession}
               onPreviewVoice={onPreviewVoice}
               prepById={prepById}
             />
 
             <PromptComposer
+              activeVoiceAgentId={activeVoiceAgentId}
               isArchived={false}
               isCouncilThinking={isCouncilThinking}
+              isEndingSession={isEndingSession}
               isLoading={isLoading || isSessionLoading}
               isPromptRecording={isPromptRecording}
               onAskQuestion={onAskQuestion}
+              onEndLiveSession={onEndLiveSession}
+              onEndSession={onEndSession}
               onQuestionChange={onQuestionChange}
               onStartVoicePrompt={onStartVoicePrompt}
               onStopVoicePrompt={onStopVoicePrompt}
               question={question}
+              selectedSession={selectedSession}
               supportsVoicePromptInput={supportsVoicePromptInput}
             />
 
@@ -807,28 +857,6 @@ function CouncilHome({
 
             <SessionTranscript events={events} session={selectedSession} />
 
-            {activeVoiceAgentId ? (
-              <button
-                className="end-live-button"
-                type="button"
-                onClick={onEndLiveSession}
-              >
-                <PhoneOff size={17} aria-hidden="true" />
-                Reset live room
-              </button>
-            ) : null}
-
-            {selectedSession?.status === "active" ? (
-              <button
-                className="end-live-button"
-                type="button"
-                onClick={onEndSession}
-                disabled={isEndingSession || isSessionLoading}
-              >
-                <PhoneOff size={17} aria-hidden="true" />
-                {isEndingSession ? "Saving memory..." : "End Session"}
-              </button>
-            ) : null}
           </>
         )}
       </section>
@@ -934,14 +962,11 @@ function ArchiveSessionDetail({
   events: SessionEvent[];
   session: DramaSession;
 }) {
-  const [summaryMode, setSummaryMode] = useState<"read" | "listen">("read");
+  const [activeSpeechId, setActiveSpeechId] = useState<string | null>(null);
+  const speechRunIdRef = useRef(0);
   const participantAgents = FRIENDS_MODE_AGENTS.filter((agent) =>
     events.some((event) => event.agentId === agent.id),
   );
-  const audioSource =
-    session.summaryAudioBase64 && session.summaryAudioMime
-      ? `data:${session.summaryAudioMime};base64,${session.summaryAudioBase64}`
-      : null;
   const endedDate = session.endedAt
     ? new Date(session.endedAt).toLocaleDateString(undefined, {
         month: "short",
@@ -950,22 +975,70 @@ function ArchiveSessionDetail({
       })
     : "Saved";
 
-  const speakSummary = (text: string | null, lang: string): void => {
+  const speakSummary = (text: string | null, lang: string, speechId: string): void => {
     if (!text?.trim() || !("speechSynthesis" in window)) {
       return;
     }
 
+    const runId = speechRunIdRef.current + 1;
+    speechRunIdRef.current = runId;
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = lang;
+    utterance.onend = () => {
+      if (speechRunIdRef.current === runId) {
+        setActiveSpeechId(null);
+      }
+    };
+    utterance.onerror = () => {
+      if (speechRunIdRef.current === runId) {
+        setActiveSpeechId(null);
+      }
+    };
+    setActiveSpeechId(speechId);
     window.speechSynthesis.speak(utterance);
+  };
+
+  const stopSpeech = (): void => {
+    speechRunIdRef.current += 1;
+    window.speechSynthesis?.cancel();
+    setActiveSpeechId(null);
   };
 
   useEffect(() => {
     return () => {
+      speechRunIdRef.current += 1;
       window.speechSynthesis?.cancel();
     };
   }, []);
+
+  const renderSummaryActions = (
+    text: string | null,
+    lang: string,
+    speechId: string,
+    label: string,
+  ) => (
+    <span className="voice-action-row">
+      <button
+        className="voice-action"
+        type="button"
+        disabled={!text?.trim()}
+        onClick={() => speakSummary(text, lang, speechId)}
+      >
+        Listen Summary
+      </button>
+      <button
+        className="voice-stop-button"
+        type="button"
+        disabled={activeSpeechId !== speechId}
+        onClick={stopSpeech}
+        aria-label={`Stop ${label} summary`}
+      >
+        <PhoneOff size={14} aria-hidden="true" />
+        Stop
+      </button>
+    </span>
+  );
 
   return (
     <section className="archive-detail" aria-label="Saved chat summary">
@@ -977,50 +1050,16 @@ function ArchiveSessionDetail({
         </p>
       </div>
 
-      <div className="summary-mode-toggle" role="group" aria-label="Summary mode">
-        <button
-          className={summaryMode === "read" ? "selected" : ""}
-          type="button"
-          onClick={() => setSummaryMode("read")}
-        >
-          <BookOpen size={17} aria-hidden="true" />
-          Read
-        </button>
-        <button
-          className={summaryMode === "listen" ? "selected" : ""}
-          type="button"
-          onClick={() => setSummaryMode("listen")}
-        >
-          <Headphones size={17} aria-hidden="true" />
-          Listen
-        </button>
-      </div>
-
       <div className="archive-grid">
         <section className="archive-panel summary-feature">
-          <div className="archive-panel-title">
-            <Headphones size={18} aria-hidden="true" />
-            <strong>AI summary</strong>
-          </div>
-          {summaryMode === "read" ? (
-            <p>{session.summaryEnglish ?? "No summary was generated for this chat yet."}</p>
-          ) : (
-            <div className="listen-stack">
-              {audioSource ? (
-                <audio controls src={audioSource} />
-              ) : (
-                <button
-                  className="voice-action"
-                  type="button"
-                  disabled={!session.summaryEnglish}
-                  onClick={() => speakSummary(session.summaryEnglish, "en-US")}
-                >
-                  Play English summary
-                </button>
-              )}
-              <small>{audioSource ? "AI-generated English audio is ready." : "Browser voice playback is ready."}</small>
+          <div className="summary-panel-heading">
+            <div className="archive-panel-title">
+              <Headphones size={18} aria-hidden="true" />
+              <strong>AI summary</strong>
             </div>
-          )}
+            {renderSummaryActions(session.summaryEnglish, "en-US", "english", "English")}
+          </div>
+          <p>{session.summaryEnglish ?? "No summary was generated for this chat yet."}</p>
         </section>
 
         <section className="archive-panel participants-panel">
@@ -1053,45 +1092,29 @@ function ArchiveSessionDetail({
         <section className="archive-panel translations-panel">
           <div className="archive-panel-title">
             <Languages size={18} aria-hidden="true" />
-            <strong>Voice translations</strong>
+            <strong>Translations</strong>
           </div>
           <div className="translation-card">
-            <div>
-              <strong>Hindi</strong>
-              <small>{session.summaryHindi ? "Ready to read or play" : "Not generated"}</small>
+            <div className="translation-card-heading">
+              <span>
+                <strong>Hindi</strong>
+                <small>{session.summaryHindi ? "Ready" : "Not generated"}</small>
+              </span>
+              {renderSummaryActions(session.summaryHindi, "hi-IN", "hindi", "Hindi")}
             </div>
-            {summaryMode === "read" ? (
-              <p lang="hi">{session.summaryHindi || "Hindi translation is not available yet."}</p>
-            ) : (
-              <button
-                className="voice-action"
-                type="button"
-                disabled={!session.summaryHindi}
-                onClick={() => speakSummary(session.summaryHindi, "hi-IN")}
-              >
-                Play Hindi voice
-              </button>
-            )}
+            <p lang="hi">{session.summaryHindi || "Hindi translation is not available yet."}</p>
           </div>
           <div className="translation-card">
-            <div>
-              <strong>Chinese</strong>
-              <small>{session.summaryChinese ? "Ready to read or play" : "Not generated"}</small>
+            <div className="translation-card-heading">
+              <span>
+                <strong>Chinese</strong>
+                <small>{session.summaryChinese ? "Ready" : "Not generated"}</small>
+              </span>
+              {renderSummaryActions(session.summaryChinese, "zh-CN", "chinese", "Chinese")}
             </div>
-            {summaryMode === "read" ? (
-              <p lang="zh-Hans">
-                {session.summaryChinese || "Chinese translation is not available yet."}
-              </p>
-            ) : (
-              <button
-                className="voice-action"
-                type="button"
-                disabled={!session.summaryChinese}
-                onClick={() => speakSummary(session.summaryChinese, "zh-CN")}
-              >
-                Play Chinese voice
-              </button>
-            )}
+            <p lang="zh-Hans">
+              {session.summaryChinese || "Chinese translation is not available yet."}
+            </p>
           </div>
         </section>
       </div>
@@ -1171,12 +1194,14 @@ function CouncilPhotoRow({
   activeVoiceAgentId,
   isArchived,
   isConnectingVoice,
+  onEndLiveSession,
   onPreviewVoice,
   prepById,
 }: {
   activeVoiceAgentId: string | null;
   isArchived: boolean;
   isConnectingVoice: boolean;
+  onEndLiveSession: () => void;
   onPreviewVoice: (agentId: string) => void;
   prepById: Record<string, FriendPrepState>;
 }) {
@@ -1189,24 +1214,41 @@ function CouncilPhotoRow({
         const statusLabel = isActive ? "live" : prepState;
 
         return (
-          <button
+          <article
             className={`member-photo-card is-${prepState} ${isActive ? "is-live" : ""}`}
-            type="button"
             key={agent.id}
-            disabled={isArchived || !isReady || isConnectingVoice}
-            onClick={() => onPreviewVoice(agent.id)}
-            aria-label={`${agent.name}, ${agent.role}, ${statusLabel}`}
           >
-            <span className="portrait-wrap">
-              <img src={agent.avatarImage} alt="" aria-hidden="true" />
-              <span className="status-orbit" aria-hidden="true"></span>
+            <button
+              className="member-photo-main"
+              type="button"
+              disabled={isArchived || !isReady || isConnectingVoice}
+              onClick={() => onPreviewVoice(agent.id)}
+              aria-label={`${agent.name}, ${agent.role}, ${statusLabel}`}
+            >
+              <span className="portrait-wrap">
+                <img src={agent.avatarImage} alt="" aria-hidden="true" />
+                <span className="status-orbit" aria-hidden="true"></span>
+              </span>
+              <span className="member-copy">
+                <strong>{agent.name}</strong>
+                <small>{agent.role}</small>
+              </span>
+            </button>
+            <span className="member-live-row">
+              <span className="member-state">{statusLabel}</span>
+              {isActive ? (
+                <button
+                  className="member-stop-button"
+                  type="button"
+                  onClick={onEndLiveSession}
+                  aria-label={`Stop talking to ${agent.name}`}
+                >
+                  <PhoneOff size={13} aria-hidden="true" />
+                  Stop
+                </button>
+              ) : null}
             </span>
-            <span className="member-copy">
-              <strong>{agent.name}</strong>
-              <small>{agent.role}</small>
-            </span>
-            <span className="member-state">{statusLabel}</span>
-          </button>
+          </article>
         );
       })}
     </section>
@@ -1214,30 +1256,45 @@ function CouncilPhotoRow({
 }
 
 function PromptComposer({
+  activeVoiceAgentId,
   isArchived,
   isCouncilThinking,
+  isEndingSession,
   isLoading,
   isPromptRecording,
   onAskQuestion,
+  onEndLiveSession,
+  onEndSession,
   onQuestionChange,
   onStartVoicePrompt,
   onStopVoicePrompt,
   question,
+  selectedSession,
   supportsVoicePromptInput,
 }: {
+  activeVoiceAgentId: string | null;
   isArchived: boolean;
   isCouncilThinking: boolean;
+  isEndingSession: boolean;
   isLoading: boolean;
   isPromptRecording: boolean;
   onAskQuestion: () => void;
+  onEndLiveSession: () => void;
+  onEndSession: () => void;
   onQuestionChange: (question: string) => void;
   onStartVoicePrompt: () => void;
   onStopVoicePrompt: () => void;
   question: string;
+  selectedSession: DramaSession | null;
   supportsVoicePromptInput: boolean;
 }) {
   const isSubmitDisabled = isArchived || !question.trim() || isCouncilThinking || isLoading;
-  const actionLabel = isArchived ? "Session Ended" : isCouncilThinking || isLoading ? "Thinking" : "Ask Council";
+  const actionLabel = isArchived ? "Session Ended" : isCouncilThinking ? "Thinking" : "Ask Council";
+  const isActiveSession = selectedSession?.status === "active";
+  const isInsideSession = Boolean(
+    isActiveSession &&
+      (selectedSession?.originalQuestion || activeVoiceAgentId || isCouncilThinking),
+  );
 
   return (
     <section className="prompt-composer" aria-label="Question composer">
@@ -1248,7 +1305,7 @@ function PromptComposer({
         rows={5}
         disabled={isArchived}
       />
-      <div className="composer-actions">
+      <div className={`composer-actions ${isInsideSession ? "in-session" : ""}`}>
         <button
           className={`mic-button ${isPromptRecording ? "recording" : ""}`}
           type="button"
@@ -1264,13 +1321,35 @@ function PromptComposer({
           disabled={isSubmitDisabled}
           onClick={onAskQuestion}
         >
-          {isCouncilThinking || isLoading ? (
+          {isCouncilThinking ? (
             <Loader2 className="spin" size={18} aria-hidden="true" />
           ) : (
             <Send size={18} aria-hidden="true" />
           )}
           {actionLabel}
         </button>
+        {isInsideSession ? (
+          <button
+            className="session-action-button"
+            type="button"
+            onClick={onEndLiveSession}
+            disabled={!activeVoiceAgentId}
+          >
+            <PhoneOff size={17} aria-hidden="true" />
+            Stop talking
+          </button>
+        ) : null}
+        {isInsideSession ? (
+          <button
+            className="session-action-button danger"
+            type="button"
+            onClick={onEndSession}
+            disabled={isEndingSession || isLoading}
+          >
+            <PhoneOff size={17} aria-hidden="true" />
+            {isEndingSession ? "Saving..." : "End Session"}
+          </button>
+        ) : null}
       </div>
     </section>
   );
