@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { handleSessionById } from "../sessionStore.js";
+import { handleSessionById } from "../../server/sessionStore.js";
 
 export default async function handler(
   req: IncomingMessage & { query?: { sessionId?: string } },

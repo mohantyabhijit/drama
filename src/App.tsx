@@ -688,6 +688,7 @@ function CouncilHome({
         <div className="home-intro">
           <p className="eyebrow">Ask the council</p>
           <h1 id="home-title">Put one decision in the room.</h1>
+          <p className="home-subtitle">Decision Review by Artificial Moronic Advisors</p>
         </div>
 
         <CouncilPhotoRow

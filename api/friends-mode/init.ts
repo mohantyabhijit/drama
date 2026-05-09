@@ -1,22 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { defineConfig, type Plugin } from "vite";
-import react from "@vitejs/plugin-react";
 import {
   FRIENDS_MODE_AGENTS,
   FRIENDS_MODE_VOICE_MODEL,
   type FriendVoiceAgentBlueprint,
   type FriendVoiceAgentRuntime,
-} from "./src/friendsMode";
-import {
-  getPathParts,
-  handleMemoriesIndex,
-  handleSessionById,
-  handleSessionEnd,
-  handleSessionEvents,
-  handleSessionsIndex,
-} from "./server/sessionStore.js";
+} from "../../src/friendsMode.js";
 
 const OPENAI_API_BASE = "https://api.openai.com/v1";
 const CLIENT_SECRET_TTL_SECONDS = 600;
@@ -172,90 +162,46 @@ async function createVoiceClientSecret(
   };
 }
 
-function dramaFriendsModeApi(): Plugin {
-  return {
-    name: "drama-friends-mode-api",
-    configureServer(server) {
-      server.middlewares.use("/api/sessions", async (req, res, next) => {
-        const parts = getPathParts(req);
-        const sessionId = parts[2];
-        const action = parts[3];
+export default async function handler(req: IncomingMessage, res: ServerResponse) {
+  if (req.method !== "POST") {
+    sendJson(res, 405, { error: "Use POST /api/friends-mode/init." });
+    return;
+  }
 
-        if (parts.length === 2) {
-          await handleSessionsIndex(req, res);
-          return;
-        }
+  const apiKey = getServerApiKey();
+  if (!apiKey) {
+    sendJson(res, 500, {
+      error: "OpenAI API key was not found. Set OPENAI_API_KEY in Vercel.",
+    });
+    return;
+  }
 
-        if (parts.length === 3 && sessionId) {
-          await handleSessionById(req, res, sessionId);
-          return;
-        }
+  try {
+    const body = (await readJsonBody(req)) as { userId?: unknown };
+    const userId =
+      typeof body.userId === "string" && body.userId.trim().length > 0
+        ? body.userId.trim()
+        : "anonymous-user";
+    const safetyIdentifier = buildSafetyIdentifier(userId);
 
-        if (parts.length === 4 && sessionId && action === "events") {
-          await handleSessionEvents(req, res, sessionId);
-          return;
-        }
+    const agents = await Promise.all(
+      FRIENDS_MODE_AGENTS.map((agent) =>
+        createVoiceClientSecret(agent, apiKey, safetyIdentifier),
+      ),
+    );
 
-        if (parts.length === 4 && sessionId && action === "end") {
-          await handleSessionEnd(req, res, sessionId);
-          return;
-        }
-
-        next();
-      });
-
-      server.middlewares.use("/api/memories", async (req, res) => {
-        await handleMemoriesIndex(req, res);
-      });
-
-      server.middlewares.use("/api/friends-mode/init", async (req, res) => {
-        if (req.method !== "POST") {
-          sendJson(res, 405, { error: "Use POST /api/friends-mode/init." });
-          return;
-        }
-
-        const apiKey = getServerApiKey();
-        if (!apiKey) {
-          sendJson(res, 500, {
-            error:
-              "OpenAI API key was not found. Set OPENAI_API_KEY or store OPENAI_API_KEY in Keychain.",
-          });
-          return;
-        }
-
-        try {
-          const body = (await readJsonBody(req)) as { userId?: unknown };
-          const userId =
-            typeof body.userId === "string" && body.userId.trim().length > 0
-              ? body.userId.trim()
-              : "anonymous-user";
-          const safetyIdentifier = buildSafetyIdentifier(userId);
-
-          const agents = await Promise.all(
-            FRIENDS_MODE_AGENTS.map((agent) =>
-              createVoiceClientSecret(agent, apiKey, safetyIdentifier),
-            ),
-          );
-
-          sendJson(res, 200, {
-            mode: "friends",
-            models: [FRIENDS_MODE_VOICE_MODEL],
-            initializedAt: new Date().toISOString(),
-            agents,
-          });
-        } catch (error) {
-          sendJson(res, 500, {
-            error:
-              error instanceof Error
-                ? error.message
-                : "Unable to initialize Friends Mode voice agents.",
-          });
-        }
-      });
-    },
-  };
+    sendJson(res, 200, {
+      mode: "friends",
+      models: [FRIENDS_MODE_VOICE_MODEL],
+      initializedAt: new Date().toISOString(),
+      agents,
+    });
+  } catch (error) {
+    sendJson(res, 500, {
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unable to initialize Friends Mode voice agents.",
+    });
+  }
 }
-
-export default defineConfig({
-  plugins: [react(), dramaFriendsModeApi()],
-});
