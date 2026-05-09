@@ -812,7 +812,7 @@ function CouncilHome({
                   ? "Council preparing"
                   : activeVoiceAgentId
                     ? "Live voice"
-                    : "Voice Council"}
+                    : "Powered by GPT Realtime 2"}
             </p>
             {selectedSession?.status === "ended" ? (
               <button
@@ -833,7 +833,6 @@ function CouncilHome({
         ) : (
           <>
             <div className="home-intro">
-              <p className="eyebrow">Ask the council</p>
               <h2 className="home-title" id="home-title">
                 Talk to your council of closest friends.
               </h2>
@@ -1284,7 +1283,7 @@ function PromptComposer({
       <textarea
         value={question}
         onChange={(event) => onQuestionChange(event.target.value)}
-        placeholder="Should I launch this now, or tighten the onboarding first?"
+        placeholder="What do you want to talk about ?"
         rows={5}
         disabled={isArchived}
       />
