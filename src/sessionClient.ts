@@ -72,13 +72,17 @@ export async function appendSessionEvent(input: {
 export async function endSession(input: {
   userId: string;
   sessionId: string;
-}): Promise<{ session: DramaSession; memory: LongTermMemory | null }> {
+}): Promise<{ session: DramaSession; events: SessionEvent[]; memory: LongTermMemory | null }> {
   const response = await fetch(`/api/sessions/${encodeURIComponent(input.sessionId)}/end`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ userId: input.userId }),
   });
-  return await parseResponse<{ session: DramaSession; memory: LongTermMemory | null }>(response);
+  return await parseResponse<{
+    session: DramaSession;
+    events: SessionEvent[];
+    memory: LongTermMemory | null;
+  }>(response);
 }
 
 export async function listMemories(userId: string): Promise<LongTermMemory[]> {

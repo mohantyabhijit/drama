@@ -11,6 +11,12 @@ export type DramaSession = {
   updatedAt: string;
   endedAt: string | null;
   memorySummary: string | null;
+  summaryEnglish: string | null;
+  summaryChinese: string | null;
+  summaryHindi: string | null;
+  summaryAudioMime: string | null;
+  summaryAudioBase64: string | null;
+  summaryGeneratedAt: string | null;
 };
 
 export type SessionEvent = {

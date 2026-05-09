@@ -270,9 +270,10 @@ function App() {
         sessionId: selectedSession.id,
       });
       setSelectedSession(result.session);
+      setSessionEvents(result.events);
       replaceSessionInList(result.session);
       setLongTermMemories(await listMemories(friendsUserId));
-      setFriendsStatusMessage("Session ended and saved to long-term memory.");
+      setFriendsStatusMessage("Session ended. Transcript, summaries, and audio recap are saved.");
     } catch (error) {
       setFriendsInitError(error instanceof Error ? error.message : "Failed to end session.");
     } finally {
@@ -714,7 +715,7 @@ function CouncilHome({
           {error || statusMessage || fallbackStatus}
         </div>
 
-        <SessionTranscript events={events} />
+        <SessionTranscript events={events} session={selectedSession} />
 
         {activeVoiceAgentId ? (
           <button
@@ -791,19 +792,64 @@ function SessionSidebar({
   );
 }
 
-function SessionTranscript({ events }: { events: SessionEvent[] }) {
-  if (events.length === 0) {
+function SessionTranscript({
+  events,
+  session,
+}: {
+  events: SessionEvent[];
+  session: DramaSession | null;
+}) {
+  const isEnded = session?.status === "ended";
+  const visibleEvents = isEnded ? events : events.slice(-5);
+  const audioSource =
+    session?.summaryAudioBase64 && session.summaryAudioMime
+      ? `data:${session.summaryAudioMime};base64,${session.summaryAudioBase64}`
+      : null;
+
+  if (events.length === 0 && !session?.summaryEnglish) {
     return null;
   }
 
   return (
-    <section className="session-transcript" aria-label="Shared session context">
+    <section
+      className={`session-transcript ${isEnded ? "full" : ""}`}
+      aria-label={isEnded ? "Ended session transcript and summaries" : "Shared session context"}
+    >
       <div className="session-transcript-header">
-        <strong>Shared room context</strong>
+        <strong>{isEnded ? "Session archive" : "Shared room context"}</strong>
         <small>{events.length} saved turn{events.length === 1 ? "" : "s"}</small>
       </div>
+
+      {isEnded && session?.summaryEnglish ? (
+        <div className="session-summary-panel">
+          <div className="summary-block">
+            <strong>English summary</strong>
+            <p>{session.summaryEnglish}</p>
+          </div>
+          {audioSource ? (
+            <div className="summary-block">
+              <strong>Voice summary</strong>
+              <audio controls src={audioSource} />
+              <small>AI-generated English audio summary.</small>
+            </div>
+          ) : null}
+          {session.summaryChinese ? (
+            <div className="summary-block">
+              <strong>Chinese</strong>
+              <p lang="zh-Hans">{session.summaryChinese}</p>
+            </div>
+          ) : null}
+          {session.summaryHindi ? (
+            <div className="summary-block">
+              <strong>Hindi</strong>
+              <p lang="hi">{session.summaryHindi}</p>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="session-transcript-list">
-        {events.slice(-5).map((event) => (
+        {visibleEvents.map((event) => (
           <article className={`transcript-event ${event.speakerType}`} key={event.id}>
             <strong>{event.agentId ?? event.speakerType}</strong>
             <p>{event.content}</p>

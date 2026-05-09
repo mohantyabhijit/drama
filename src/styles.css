@@ -544,6 +544,42 @@ h1 {
   background: rgba(255, 255, 255, 0.48);
 }
 
+.session-summary-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.summary-block {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fffefb;
+}
+
+.summary-block strong {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.summary-block p {
+  margin: 0;
+  white-space: pre-wrap;
+  color: var(--ink);
+  font-size: 0.94rem;
+  line-height: 1.45;
+}
+
+.summary-block audio {
+  width: 100%;
+}
+
+.summary-block small {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
 .session-transcript-header small {
   color: var(--muted);
   font-size: 0.78rem;
@@ -578,6 +614,13 @@ h1 {
   line-height: 1.4;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+.session-transcript.full .transcript-event p {
+  display: block;
+  overflow: visible;
+  white-space: pre-wrap;
+  -webkit-line-clamp: unset;
 }
 
 .end-live-button {

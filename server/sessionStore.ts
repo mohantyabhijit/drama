@@ -14,6 +14,12 @@ export type DramaSession = {
   updatedAt: string;
   endedAt: string | null;
   memorySummary: string | null;
+  summaryEnglish: string | null;
+  summaryChinese: string | null;
+  summaryHindi: string | null;
+  summaryAudioMime: string | null;
+  summaryAudioBase64: string | null;
+  summaryGeneratedAt: string | null;
 };
 
 export type SessionEvent = {
@@ -51,6 +57,12 @@ type SessionRow = {
   updated_at: string | Date;
   ended_at: string | Date | null;
   memory_summary: string | null;
+  summary_english: string | null;
+  summary_chinese: string | null;
+  summary_hindi: string | null;
+  summary_audio_mime: string | null;
+  summary_audio_base64: string | null;
+  summary_generated_at: string | Date | null;
 };
 
 type EventRow = {
@@ -103,6 +115,12 @@ function mapSession(row: SessionRow): DramaSession {
     updatedAt: toIso(row.updated_at),
     endedAt: row.ended_at ? toIso(row.ended_at) : null,
     memorySummary: row.memory_summary,
+    summaryEnglish: row.summary_english,
+    summaryChinese: row.summary_chinese,
+    summaryHindi: row.summary_hindi,
+    summaryAudioMime: row.summary_audio_mime,
+    summaryAudioBase64: row.summary_audio_base64,
+    summaryGeneratedAt: row.summary_generated_at ? toIso(row.summary_generated_at) : null,
   };
 }
 
@@ -183,6 +201,12 @@ export async function ensureSessionSchema(): Promise<void> {
           memory_summary text
         )
       `;
+      await sql`alter table sessions add column if not exists summary_english text`;
+      await sql`alter table sessions add column if not exists summary_chinese text`;
+      await sql`alter table sessions add column if not exists summary_hindi text`;
+      await sql`alter table sessions add column if not exists summary_audio_mime text`;
+      await sql`alter table sessions add column if not exists summary_audio_base64 text`;
+      await sql`alter table sessions add column if not exists summary_generated_at timestamptz`;
       await sql`
         create table if not exists session_events (
           id uuid primary key default gen_random_uuid(),
@@ -256,6 +280,153 @@ function summarizeSession(events: SessionEvent[]): string {
   }
 
   return useful.join("\n").slice(0, 1800);
+}
+
+function getOpenAiApiKey(): string | null {
+  return process.env.OPENAI_API_KEY?.trim() || null;
+}
+
+function formatTranscript(events: SessionEvent[]): string {
+  return events
+    .filter((event) => event.speakerType !== "system")
+    .map((event) => {
+      const speaker =
+        event.speakerType === "agent" ? event.agentId ?? "agent" : event.speakerType;
+      return `${speaker}: ${event.content.replace(/\s+/g, " ").trim()}`;
+    })
+    .join("\n");
+}
+
+async function generateTextWithOpenAi(input: {
+  apiKey: string;
+  instructions: string;
+  prompt: string;
+}): Promise<string> {
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${input.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      instructions: input.instructions,
+      input: input.prompt,
+      max_output_tokens: 700,
+    }),
+  });
+
+  const payload = (await response.json().catch(() => null)) as
+    | {
+        output_text?: string;
+        output?: Array<{
+          content?: Array<{
+            text?: string;
+            type?: string;
+          }>;
+        }>;
+        error?: { message?: string };
+      }
+    | null;
+
+  if (!response.ok) {
+    throw new Error(payload?.error?.message ?? `OpenAI text request failed with ${response.status}.`);
+  }
+
+  const structuredText = payload?.output
+    ?.flatMap((item) => item.content ?? [])
+    .map((content) => content.text ?? "")
+    .join("")
+    .trim();
+  const text = payload?.output_text?.trim() || structuredText;
+  if (!text) {
+    throw new Error("OpenAI text request returned no output text.");
+  }
+  return text;
+}
+
+async function generateSpeechWithOpenAi(input: {
+  apiKey: string;
+  text: string;
+}): Promise<{ mime: string; base64: string }> {
+  const response = await fetch("https://api.openai.com/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${input.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini-tts",
+      voice: "coral",
+      input: input.text.slice(0, 3800),
+      instructions: "Speak clearly and warmly, like a concise meeting recap.",
+      response_format: "mp3",
+    }),
+  });
+
+  if (!response.ok) {
+    const message = await response.text().catch(() => "");
+    throw new Error(message || `OpenAI speech request failed with ${response.status}.`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  return {
+    mime: response.headers.get("content-type") || "audio/mpeg",
+    base64: Buffer.from(arrayBuffer).toString("base64"),
+  };
+}
+
+async function generateSessionArtifacts(events: SessionEvent[]): Promise<{
+  summaryEnglish: string;
+  summaryChinese: string;
+  summaryHindi: string;
+  audioMime: string | null;
+  audioBase64: string | null;
+}> {
+  const fallbackSummary = summarizeSession(events);
+  const transcript = formatTranscript(events);
+  const apiKey = getOpenAiApiKey();
+
+  if (!apiKey || !transcript.trim()) {
+    return {
+      summaryEnglish: fallbackSummary,
+      summaryChinese: "",
+      summaryHindi: "",
+      audioMime: null,
+      audioBase64: null,
+    };
+  }
+
+  const summaryEnglish = await generateTextWithOpenAi({
+    apiKey,
+    instructions:
+      "Create a durable session summary for a friend-style AI council app. Be concise, specific, and useful when the user reopens the session. Mention decisions, useful advice, follow-ups, and unresolved questions. Do not invent facts.",
+    prompt: `Summarize this session in English in 4-7 short bullets.\n\nTranscript:\n${transcript.slice(0, 12000)}`,
+  });
+
+  const [summaryChinese, summaryHindi, audio] = await Promise.all([
+    generateTextWithOpenAi({
+      apiKey,
+      instructions:
+        "Translate the supplied English session summary into Simplified Chinese. Preserve names, product names, and bullet structure. Do not add new information.",
+      prompt: summaryEnglish,
+    }),
+    generateTextWithOpenAi({
+      apiKey,
+      instructions:
+        "Translate the supplied English session summary into Hindi. Preserve names, product names, and bullet structure. Do not add new information.",
+      prompt: summaryEnglish,
+    }),
+    generateSpeechWithOpenAi({ apiKey, text: summaryEnglish }),
+  ]);
+
+  return {
+    summaryEnglish,
+    summaryChinese,
+    summaryHindi,
+    audioMime: audio.mime,
+    audioBase64: audio.base64,
+  };
 }
 
 export async function listSessions(userId: string): Promise<DramaSession[]> {
@@ -401,7 +572,7 @@ export async function appendSessionEvent(input: {
 export async function endSession(input: {
   userId: string;
   sessionId: string;
-}): Promise<{ session: DramaSession; memory: LongTermMemory | null }> {
+}): Promise<{ session: DramaSession; events: SessionEvent[]; memory: LongTermMemory | null }> {
   await ensureSessionSchema();
   const sql = getSql();
   const bundle = await getSessionBundle(input);
@@ -415,17 +586,25 @@ export async function endSession(input: {
     `) as MemoryRow[];
     return {
       session: bundle.session,
+      events: bundle.events,
       memory: memoryRows[0] ? mapMemory(memoryRows[0]) : null,
     };
   }
 
-  const memorySummary = summarizeSession(bundle.events);
+  const artifacts = await generateSessionArtifacts(bundle.events);
+  const memorySummary = artifacts.summaryEnglish;
   const [sessionRow] = (await sql`
     update sessions
     set status = 'ended',
         ended_at = now(),
         updated_at = now(),
-        memory_summary = ${memorySummary}
+        memory_summary = ${memorySummary},
+        summary_english = ${artifacts.summaryEnglish},
+        summary_chinese = ${artifacts.summaryChinese || null},
+        summary_hindi = ${artifacts.summaryHindi || null},
+        summary_audio_mime = ${artifacts.audioMime},
+        summary_audio_base64 = ${artifacts.audioBase64},
+        summary_generated_at = now()
     where id = ${input.sessionId} and user_id = ${input.userId}
     returning *
   `) as SessionRow[];
@@ -436,7 +615,7 @@ export async function endSession(input: {
 
   const shouldRemember = bundle.events.some((event) => event.speakerType !== "system");
   if (!shouldRemember) {
-    return { session: mapSession(sessionRow), memory: null };
+    return { session: mapSession(sessionRow), events: bundle.events, memory: null };
   }
 
   const [memoryRow] = (await sql`
@@ -461,6 +640,7 @@ export async function endSession(input: {
 
   return {
     session: mapSession(sessionRow),
+    events: bundle.events,
     memory: memoryRow ? mapMemory(memoryRow) : null,
   };
 }
