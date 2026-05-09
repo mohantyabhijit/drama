@@ -1,27 +1,79 @@
 # D.R.A.M.A.
 
-D.R.A.M.A. is Decision Review by Artificial Moronic Advisors: a playful realtime voice council for pressure-testing choices before they harden into plans. The demo imagines AI personas as biased advisors, each with a clear role, blind spot, and speaking style. In Group D.R.A.M.A., a chaotic friend council critiques an idea, votes, and turns messy reactions into a useful verdict. In Inner D.R.A.M.A., your own contradictory selves debate a personal decision with ambition, risk, care, and future regret in the room.
+D.R.A.M.A. stands for **Decision Review by Artificial Moronic Advisors**: a playful realtime voice council for pressure-testing choices before they harden into plans.
 
-Live app: https://drama-dun.vercel.app/
+The app turns decision-making into a small council room. You ask a question, choose a friend-style AI advisor, speak live, review the conversation transcript, and keep session history so recurring dilemmas can build context over time.
 
-The current repo is a Vite, React, and TypeScript prototype. It ships a polished interactive mock of the council room, persona controls, live transcript, verdict panel, research receipts, architecture checklist, and a standalone `plan.html` concept document. The app is demo-first: it can replay scripted conversations, show Fast versus Pro modes, and communicate the intended product loop without requiring backend voice infrastructure yet. The goal is a product pitch, clickable prototype, and implementation roadmap sharing one compact surface for critique, iteration, and investor-friendly storytelling during early testing.
+- Live app: https://drama-dun.vercel.app/
+- YouTube demo: https://youtu.be/NrdoRJlTaFQ
 
-Run it locally:
+## What It Does
+
+- Runs a friend council with opinionated AI personas such as Bobo, Sandy, and Adi.
+- Starts realtime voice previews through OpenAI Realtime sessions.
+- Captures live transcript lines from user and agent turns.
+- Stores sessions, events, summaries, and long-term memories.
+- Supports voice prompt input in browsers with Speech Recognition support.
+- Provides a polished prototype surface for demos, product critique, and roadmap conversations.
+
+## Tech Stack
+
+- **Frontend:** React 19, TypeScript, Vite
+- **UI and interaction:** Framer Motion, Lucide React, custom CSS
+- **Voice AI:** OpenAI Realtime API, WebRTC, data channels, browser microphone APIs
+- **Speech input:** Browser Speech Recognition / `webkitSpeechRecognition`
+- **Backend:** Vercel serverless API routes using Node.js request handlers
+- **Database:** Neon serverless Postgres via `@neondatabase/serverless`
+- **Persistence:** Sessions, session events, multilingual summaries, audio summaries, and long-term memories
+- **Deployment:** Vercel
+
+## Local Development
+
+Install dependencies:
 
 ```bash
 npm install
+```
+
+Start the dev server:
+
+```bash
 npm run dev
 ```
 
-Build check:
+Run a production build check:
 
 ```bash
 npm run build
 ```
 
-Deployment secrets:
+Preview the production build:
 
-- `DATABASE_URL` should be configured in Vercel or GitHub Secrets. Do not commit database URLs, API keys, or pooled Neon credentials.
-- `OPENAI_API_KEY` should also stay in Vercel or GitHub Secrets.
+```bash
+npm run preview
+```
 
-Next milestones: connect realtime audio, add a token endpoint, persist sessions, and make Pro receipts real.
+## Environment Variables
+
+Configure these in Vercel or your local environment:
+
+- `OPENAI_API_KEY`: Used by the API route that creates short-lived realtime client secrets.
+- `DATABASE_URL`: Neon/Postgres connection string for sessions, events, summaries, and memories.
+
+Do not commit database URLs, API keys, or pooled credentials.
+
+## Project Shape
+
+```text
+api/                 Vercel API routes for voice init, sessions, and memories
+server/              Shared server-side session store and persistence helpers
+src/                 React app, voice client, session client, styles, and persona definitions
+public/assets/       Friend avatar and UI assets
+plan.html            Standalone concept document / product plan
+```
+
+## Status
+
+D.R.A.M.A. is a demo-first prototype. The current build focuses on the core experience: realtime persona voices, saved sessions, transcripts, and a GitHub-ready product narrative.
+
+Next milestones include deeper council orchestration, richer verdict generation, stronger session summaries, and production hardening around auth, observability, and privacy controls.
