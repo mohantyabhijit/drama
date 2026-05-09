@@ -139,7 +139,7 @@ export function FriendsModePanel({
                   style={{ background: agent.avatarGradient }}
                   aria-hidden="true"
                 >
-                  {agent.avatar}
+                  <img src={agent.avatarImage} alt="" />
                 </span>
                 <div>
                   <strong>{agent.name}</strong>

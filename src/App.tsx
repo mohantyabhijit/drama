@@ -68,14 +68,6 @@ type CouncilHomeProps = {
 
 const FRIEND_THINK_DELAYS_MS = [760, 1080, 1360, 1660, 1960];
 
-const councilPortraits: Record<string, string> = {
-  "chaotic-optimist": "/assets/council-maya.svg",
-  "pragmatic-builder": "/assets/council-noah.svg",
-  "critical-thinker": "/assets/council-ari.svg",
-  storyteller: "/assets/council-zoe.svg",
-  "calm-mediator": "/assets/council-ivy.svg",
-};
-
 function createFriendPrepMap(
   defaultState: FriendPrepState = "idle",
 ): Record<string, FriendPrepState> {
@@ -893,7 +885,7 @@ function CouncilPhotoRow({
             aria-label={`${agent.name}, ${agent.role}, ${statusLabel}`}
           >
             <span className="portrait-wrap">
-              <img src={councilPortraits[agent.id]} alt="" aria-hidden="true" />
+              <img src={agent.avatarImage} alt="" aria-hidden="true" />
               <span className="status-orbit" aria-hidden="true"></span>
             </span>
             <span className="member-copy">

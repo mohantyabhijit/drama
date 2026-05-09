@@ -18,6 +18,7 @@ export type FriendVoiceAgentBlueprint = {
   name: string;
   role: string;
   avatar: string;
+  avatarImage: string;
   avatarGradient: string;
   kind: FriendAgentKind;
   model: FriendsModeModel;
@@ -211,6 +212,7 @@ export const FRIENDS_MODE_AGENTS: FriendVoiceAgentBlueprint[] = [
     name: "Maya",
     role: "Chaotic Optimist",
     avatar: "M",
+    avatarImage: "/assets/council-maya-face.png",
     avatarGradient: "linear-gradient(140deg, #ef4444, #f59e0b)",
     kind: "voice",
     model: FRIENDS_MODE_VOICE_MODEL,
@@ -269,6 +271,7 @@ How to respond:
     name: "Noah",
     role: "Pragmatic Builder",
     avatar: "N",
+    avatarImage: "/assets/council-noah-face.png",
     avatarGradient: "linear-gradient(140deg, #2563eb, #14b8a6)",
     kind: "voice",
     model: FRIENDS_MODE_VOICE_MODEL,
@@ -327,6 +330,7 @@ How to respond:
     name: "Ari",
     role: "Critical Thinker",
     avatar: "A",
+    avatarImage: "/assets/council-ari-face.png",
     avatarGradient: "linear-gradient(140deg, #7c3aed, #2563eb)",
     kind: "voice",
     model: FRIENDS_MODE_VOICE_MODEL,
@@ -385,6 +389,7 @@ How to respond:
     name: "Zoe",
     role: "Storyteller",
     avatar: "Z",
+    avatarImage: "/assets/council-zoe-face.png",
     avatarGradient: "linear-gradient(140deg, #f59e0b, #ec4899)",
     kind: "voice",
     model: FRIENDS_MODE_VOICE_MODEL,
@@ -443,6 +448,7 @@ How to respond:
     name: "Ivy",
     role: "Calm Mediator",
     avatar: "I",
+    avatarImage: "/assets/council-ivy-face.png",
     avatarGradient: "linear-gradient(140deg, #14b8a6, #22c55e)",
     kind: "voice",
     model: FRIENDS_MODE_VOICE_MODEL,

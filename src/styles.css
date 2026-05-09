@@ -353,6 +353,23 @@ h1 {
   object-fit: cover;
 }
 
+.friends-avatar {
+  display: block;
+  width: 48px;
+  aspect-ratio: 1;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  box-shadow: 0 10px 22px rgba(37, 25, 12, 0.14);
+  overflow: hidden;
+}
+
+.friends-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .status-orbit {
   position: absolute;
   right: 6px;
