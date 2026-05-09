@@ -79,6 +79,7 @@ type CouncilHomeProps = {
 };
 
 const FRIEND_THINK_DELAYS_MS = [760, 1080, 1360, 1660, 1960];
+const DEMO_USER_ID = "drama-local-dev-user";
 const USER_PARTICIPANT = {
   id: "user",
   name: "You",
@@ -94,22 +95,9 @@ function createFriendPrepMap(
 }
 
 function getOrCreateLocalUserId(): string {
-  if (
-    import.meta.env.DEV &&
-    ["localhost", "127.0.0.1"].includes(window.location.hostname)
-  ) {
-    return "drama-local-dev-user";
-  }
-
   const storageKey = "drama.localUserId";
-  const existing = window.localStorage.getItem(storageKey);
-  if (existing) {
-    return existing;
-  }
-
-  const next = globalThis.crypto?.randomUUID?.() ?? `drama-${Date.now()}`;
-  window.localStorage.setItem(storageKey, next);
-  return next;
+  window.localStorage.setItem(storageKey, DEMO_USER_ID);
+  return DEMO_USER_ID;
 }
 
 function App() {
