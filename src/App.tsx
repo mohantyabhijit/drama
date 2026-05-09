@@ -1,5 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AudioLines, Loader2, Mic, PhoneOff, Send } from "lucide-react";
+import {
+  AudioLines,
+  BookOpen,
+  Headphones,
+  Languages,
+  Loader2,
+  Mic,
+  PanelLeftOpen,
+  PhoneOff,
+  Send,
+  Users,
+  X,
+} from "lucide-react";
 import {
   FRIENDS_MODE_AGENTS,
   type FriendVoiceAgentBlueprint,
@@ -67,6 +79,11 @@ type CouncilHomeProps = {
 };
 
 const FRIEND_THINK_DELAYS_MS = [760, 1080, 1360, 1660, 1960];
+const USER_PARTICIPANT = {
+  id: "user",
+  name: "You",
+  role: "Original question",
+};
 
 function createFriendPrepMap(
   defaultState: FriendPrepState = "idle",
@@ -77,6 +94,13 @@ function createFriendPrepMap(
 }
 
 function getOrCreateLocalUserId(): string {
+  if (
+    import.meta.env.DEV &&
+    ["localhost", "127.0.0.1"].includes(window.location.hostname)
+  ) {
+    return "drama-local-dev-user";
+  }
+
   const storageKey = "drama.localUserId";
   const existing = window.localStorage.getItem(storageKey);
   if (existing) {
@@ -112,6 +136,7 @@ function App() {
   const voicePreviewRef = useRef<VoicePreviewSession | null>(null);
   const friendPrepTimersRef = useRef<number[]>([]);
   const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const hasLoadedSessionsRef = useRef(false);
 
   const supportsVoicePromptInput = useMemo(() => {
     if (typeof window === "undefined") {
@@ -577,6 +602,11 @@ function App() {
   };
 
   useEffect(() => {
+    if (hasLoadedSessionsRef.current) {
+      return;
+    }
+
+    hasLoadedSessionsRef.current = true;
     void refreshSessions();
   }, []);
 
@@ -648,20 +678,94 @@ function CouncilHome({
   statusMessage,
   supportsVoicePromptInput,
 }: CouncilHomeProps) {
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isHistoryMounted, setIsHistoryMounted] = useState(false);
+  const [isThreadTransitioning, setIsThreadTransitioning] = useState(false);
+  const threadTransitionTimerRef = useRef<number | null>(null);
+  const isViewingArchive = selectedSession?.status === "ended";
   const fallbackStatus = supportsVoicePromptInput
     ? "Type a question or tap the mic to speak."
     : "Type a question. Voice input is not supported in this browser.";
+  const triggerThreadTransition = (): void => {
+    if (threadTransitionTimerRef.current) {
+      window.clearTimeout(threadTransitionTimerRef.current);
+    }
+
+    setIsThreadTransitioning(true);
+    threadTransitionTimerRef.current = window.setTimeout(() => {
+      setIsThreadTransitioning(false);
+      threadTransitionTimerRef.current = null;
+    }, 720);
+  };
+
+  const handleSelectSession = (sessionId: string): void => {
+    if (sessionId !== selectedSession?.id) {
+      triggerThreadTransition();
+    }
+    onSelectSession(sessionId);
+    setIsHistoryOpen(false);
+  };
+
+  const handleCreateSession = (): void => {
+    triggerThreadTransition();
+    onCreateSession();
+    setIsHistoryOpen(false);
+  };
+
+  useEffect(() => {
+    if (isHistoryOpen) {
+      setIsHistoryMounted(true);
+      return;
+    }
+
+    const timerId = window.setTimeout(() => {
+      setIsHistoryMounted(false);
+    }, 260);
+
+    return () => window.clearTimeout(timerId);
+  }, [isHistoryOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (threadTransitionTimerRef.current) {
+        window.clearTimeout(threadTransitionTimerRef.current);
+      }
+    };
+  }, []);
 
   return (
-    <main className="council-shell" aria-labelledby="home-title">
-      <SessionSidebar
-        isLoading={isSessionLoading}
-        onCreateSession={onCreateSession}
-        onSelectSession={onSelectSession}
-        selectedSessionId={selectedSession?.id ?? null}
-        sessions={sessions}
-      />
+    <main
+      className={`council-shell ${isHistoryOpen ? "history-open" : "history-collapsed"}`}
+      aria-labelledby={isViewingArchive ? "archive-title" : "home-title"}
+    >
+      {!isHistoryOpen ? (
+        <button
+          className="history-toggle history-dock-toggle"
+          type="button"
+          onClick={() => setIsHistoryOpen(true)}
+          aria-expanded={isHistoryOpen}
+          aria-controls="session-sidebar"
+          aria-label="Show previous talks"
+        >
+          <PanelLeftOpen size={17} aria-hidden="true" />
+          <span>History</span>
+        </button>
+      ) : null}
+
+      {isHistoryMounted ? (
+        <SessionSidebar
+          isOpen={isHistoryOpen}
+          isLoading={isSessionLoading}
+          onClose={() => setIsHistoryOpen(false)}
+          onCreateSession={handleCreateSession}
+          onSelectSession={handleSelectSession}
+          selectedSessionId={selectedSession?.id ?? null}
+          sessions={sessions}
+        />
+      ) : null}
       <section className="council-card">
+        {isThreadTransitioning ? <ThreadTransitionMark /> : null}
+
         <header className="home-topbar">
           <a className="home-brand" href="/" aria-label="D.R.A.M.A. home">
             <span>D</span>
@@ -678,92 +782,141 @@ function CouncilHome({
           </p>
         </header>
 
-        <div className="home-intro">
-          <p className="eyebrow">Ask the council</p>
-          <h1 id="home-title">Put one decision in the room.</h1>
-          <p className="home-subtitle">Decision Review by Artificial Moronic Advisors</p>
-        </div>
+        {isViewingArchive ? (
+          <ArchiveSessionDetail events={events} session={selectedSession} />
+        ) : (
+          <>
+            <div className="home-intro">
+              <p className="eyebrow">Ask the council</p>
+              <h1 id="home-title">Put one decision in the room.</h1>
+              <p className="home-subtitle">Decision Review by Artificial Moronic Advisors</p>
+            </div>
 
-        <CouncilPhotoRow
-          activeVoiceAgentId={activeVoiceAgentId}
-          isArchived={selectedSession?.status === "ended"}
-          isConnectingVoice={isConnectingVoice}
-          onPreviewVoice={onPreviewVoice}
-          prepById={prepById}
-        />
+            <CouncilPhotoRow
+              activeVoiceAgentId={activeVoiceAgentId}
+              isArchived={false}
+              isConnectingVoice={isConnectingVoice}
+              onPreviewVoice={onPreviewVoice}
+              prepById={prepById}
+            />
 
-        <PromptComposer
-          isArchived={selectedSession?.status === "ended"}
-          isCouncilThinking={isCouncilThinking}
-          isLoading={isLoading || isSessionLoading}
-          isPromptRecording={isPromptRecording}
-          onAskQuestion={onAskQuestion}
-          onQuestionChange={onQuestionChange}
-          onStartVoicePrompt={onStartVoicePrompt}
-          onStopVoicePrompt={onStopVoicePrompt}
-          question={question}
-          supportsVoicePromptInput={supportsVoicePromptInput}
-        />
+            <PromptComposer
+              isArchived={false}
+              isCouncilThinking={isCouncilThinking}
+              isLoading={isLoading || isSessionLoading}
+              isPromptRecording={isPromptRecording}
+              onAskQuestion={onAskQuestion}
+              onQuestionChange={onQuestionChange}
+              onStartVoicePrompt={onStartVoicePrompt}
+              onStopVoicePrompt={onStopVoicePrompt}
+              question={question}
+              supportsVoicePromptInput={supportsVoicePromptInput}
+            />
 
-        <div className={`status-note ${error ? "error" : ""}`} role={error ? "alert" : "status"}>
-          {error || statusMessage || fallbackStatus}
-        </div>
+            <div className={`status-note ${error ? "error" : ""}`} role={error ? "alert" : "status"}>
+              {error || statusMessage || fallbackStatus}
+            </div>
 
-        <SessionTranscript events={events} session={selectedSession} />
+            <SessionTranscript events={events} session={selectedSession} />
 
-        {activeVoiceAgentId ? (
-          <button
-            className="end-live-button"
-            type="button"
-            onClick={onEndLiveSession}
-          >
-            <PhoneOff size={17} aria-hidden="true" />
-            Reset live room
-          </button>
-        ) : null}
+            {activeVoiceAgentId ? (
+              <button
+                className="end-live-button"
+                type="button"
+                onClick={onEndLiveSession}
+              >
+                <PhoneOff size={17} aria-hidden="true" />
+                Reset live room
+              </button>
+            ) : null}
 
-        {selectedSession?.status === "active" ? (
-          <button
-            className="end-live-button"
-            type="button"
-            onClick={onEndSession}
-            disabled={isEndingSession || isSessionLoading}
-          >
-            <PhoneOff size={17} aria-hidden="true" />
-            {isEndingSession ? "Saving memory..." : "End Session"}
-          </button>
-        ) : null}
+            {selectedSession?.status === "active" ? (
+              <button
+                className="end-live-button"
+                type="button"
+                onClick={onEndSession}
+                disabled={isEndingSession || isSessionLoading}
+              >
+                <PhoneOff size={17} aria-hidden="true" />
+                {isEndingSession ? "Saving memory..." : "End Session"}
+              </button>
+            ) : null}
+          </>
+        )}
       </section>
     </main>
   );
 }
 
+function ThreadTransitionMark() {
+  return (
+    <div className="thread-transition" role="status" aria-label="Switching thread">
+      <span className="thread-loader-ring" aria-hidden="true" />
+    </div>
+  );
+}
+
 function SessionSidebar({
+  isOpen,
   isLoading,
+  onClose,
   onCreateSession,
   onSelectSession,
   selectedSessionId,
   sessions,
 }: {
+  isOpen: boolean;
   isLoading: boolean;
+  onClose: () => void;
   onCreateSession: () => void;
   onSelectSession: (sessionId: string) => void;
   selectedSessionId: string | null;
   sessions: DramaSession[];
 }) {
+  const selectedActiveSession = sessions.find(
+    (session) => session.id === selectedSessionId && session.status === "active",
+  );
+  const activeSessions = sessions.filter(
+    (session) =>
+      session.status === "active" &&
+      session.id !== selectedActiveSession?.id &&
+      session.originalQuestion,
+  );
+  const rememberedSessions = sessions.filter((session) => session.status === "ended");
+  const visibleSessions = [
+    ...(selectedActiveSession ? [selectedActiveSession] : []),
+    ...rememberedSessions,
+    ...activeSessions,
+  ];
+
   return (
-    <aside className="session-sidebar" aria-label="Talk sessions">
+    <aside
+      className={`session-sidebar ${isOpen ? "open" : "closing"}`}
+      id="session-sidebar"
+      aria-label="Talk sessions"
+      aria-hidden={!isOpen}
+    >
       <div className="session-sidebar-header">
         <strong>Talks</strong>
-        <button type="button" onClick={onCreateSession} disabled={isLoading}>
-          New Talk
-        </button>
+        <div className="session-sidebar-actions">
+          <button type="button" onClick={onCreateSession} disabled={isLoading}>
+            New Talk
+          </button>
+          <button
+            className="sidebar-close"
+            type="button"
+            onClick={onClose}
+            aria-label="Hide previous talks"
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
       </div>
       <div className="session-list">
-        {sessions.length === 0 ? (
+        {visibleSessions.length === 0 ? (
           <p>{isLoading ? "Loading sessions..." : "No talks yet."}</p>
         ) : (
-          sessions.map((session) => (
+          visibleSessions.map((session) => (
             <button
               className={`session-list-item ${selectedSessionId === session.id ? "selected" : ""}`}
               type="button"
@@ -783,6 +936,178 @@ function SessionSidebar({
         )}
       </div>
     </aside>
+  );
+}
+
+function ArchiveSessionDetail({
+  events,
+  session,
+}: {
+  events: SessionEvent[];
+  session: DramaSession;
+}) {
+  const [summaryMode, setSummaryMode] = useState<"read" | "listen">("read");
+  const participantAgents = FRIENDS_MODE_AGENTS.filter((agent) =>
+    events.some((event) => event.agentId === agent.id),
+  );
+  const audioSource =
+    session.summaryAudioBase64 && session.summaryAudioMime
+      ? `data:${session.summaryAudioMime};base64,${session.summaryAudioBase64}`
+      : null;
+  const endedDate = session.endedAt
+    ? new Date(session.endedAt).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })
+    : "Saved";
+
+  const speakSummary = (text: string | null, lang: string): void => {
+    if (!text?.trim() || !("speechSynthesis" in window)) {
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = lang;
+    window.speechSynthesis.speak(utterance);
+  };
+
+  useEffect(() => {
+    return () => {
+      window.speechSynthesis?.cancel();
+    };
+  }, []);
+
+  return (
+    <section className="archive-detail" aria-label="Saved chat summary">
+      <div className="archive-hero">
+        <p className="eyebrow">Previous chat</p>
+        <h1 id="archive-title">{session.title}</h1>
+        <p className="home-subtitle">
+          {endedDate} · {events.length} saved turn{events.length === 1 ? "" : "s"}
+        </p>
+      </div>
+
+      <div className="summary-mode-toggle" role="group" aria-label="Summary mode">
+        <button
+          className={summaryMode === "read" ? "selected" : ""}
+          type="button"
+          onClick={() => setSummaryMode("read")}
+        >
+          <BookOpen size={17} aria-hidden="true" />
+          Read
+        </button>
+        <button
+          className={summaryMode === "listen" ? "selected" : ""}
+          type="button"
+          onClick={() => setSummaryMode("listen")}
+        >
+          <Headphones size={17} aria-hidden="true" />
+          Listen
+        </button>
+      </div>
+
+      <div className="archive-grid">
+        <section className="archive-panel summary-feature">
+          <div className="archive-panel-title">
+            <Headphones size={18} aria-hidden="true" />
+            <strong>AI summary</strong>
+          </div>
+          {summaryMode === "read" ? (
+            <p>{session.summaryEnglish ?? "No summary was generated for this chat yet."}</p>
+          ) : (
+            <div className="listen-stack">
+              {audioSource ? (
+                <audio controls src={audioSource} />
+              ) : (
+                <button
+                  className="voice-action"
+                  type="button"
+                  disabled={!session.summaryEnglish}
+                  onClick={() => speakSummary(session.summaryEnglish, "en-US")}
+                >
+                  Play English summary
+                </button>
+              )}
+              <small>{audioSource ? "AI-generated English audio is ready." : "Browser voice playback is ready."}</small>
+            </div>
+          )}
+        </section>
+
+        <section className="archive-panel participants-panel">
+          <div className="archive-panel-title">
+            <Users size={18} aria-hidden="true" />
+            <strong>Participants</strong>
+          </div>
+          <div className="participant-list">
+            <div className="participant-row">
+              <span className="participant-initial">Y</span>
+              <span>
+                <strong>{USER_PARTICIPANT.name}</strong>
+                <small>{USER_PARTICIPANT.role}</small>
+              </span>
+            </div>
+            {participantAgents.map((agent) => (
+              <div className="participant-row" key={agent.id}>
+                <span className="friends-avatar">
+                  <img src={agent.avatarImage} alt="" aria-hidden="true" />
+                </span>
+                <span>
+                  <strong>{agent.name}</strong>
+                  <small>{agent.role}</small>
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="archive-panel translations-panel">
+          <div className="archive-panel-title">
+            <Languages size={18} aria-hidden="true" />
+            <strong>Voice translations</strong>
+          </div>
+          <div className="translation-card">
+            <div>
+              <strong>Hindi</strong>
+              <small>{session.summaryHindi ? "Ready to read or play" : "Not generated"}</small>
+            </div>
+            {summaryMode === "read" ? (
+              <p lang="hi">{session.summaryHindi || "Hindi translation is not available yet."}</p>
+            ) : (
+              <button
+                className="voice-action"
+                type="button"
+                disabled={!session.summaryHindi}
+                onClick={() => speakSummary(session.summaryHindi, "hi-IN")}
+              >
+                Play Hindi voice
+              </button>
+            )}
+          </div>
+          <div className="translation-card">
+            <div>
+              <strong>Chinese</strong>
+              <small>{session.summaryChinese ? "Ready to read or play" : "Not generated"}</small>
+            </div>
+            {summaryMode === "read" ? (
+              <p lang="zh-Hans">
+                {session.summaryChinese || "Chinese translation is not available yet."}
+              </p>
+            ) : (
+              <button
+                className="voice-action"
+                type="button"
+                disabled={!session.summaryChinese}
+                onClick={() => speakSummary(session.summaryChinese, "zh-CN")}
+              >
+                Play Chinese voice
+              </button>
+            )}
+          </div>
+        </section>
+      </div>
+    </section>
   );
 }
 
