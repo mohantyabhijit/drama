@@ -1,8 +1,8 @@
 # D.R.A.M.A.
 
-D.R.A.M.A. stands for **Decision Review by Artificial Moronic Advisors**: a playful realtime voice council for pressure-testing choices before they harden into plans.
+D.R.A.M.A. stands for **Decision Review by Artificial Moronic Advisors**: it's your closest group of friends always live as an AI council.
 
-The app turns decision-making into a small council room. You ask a question, choose a friend-style AI advisor, speak live, review the conversation transcript, and keep session history so recurring dilemmas can build context over time.
+You ask a question, choose a friend-style AI advisor, speak live, review the conversation transcript, and keep session history so recurring dilemmas can build context over time.
 
 - Live app: https://drama-dun.vercel.app/
 - YouTube demo: https://youtu.be/NrdoRJlTaFQ
