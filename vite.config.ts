@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import {
   FRIENDS_MODE_AGENTS,
@@ -256,6 +256,10 @@ function dramaFriendsModeApi(): Plugin {
   };
 }
 
-export default defineConfig({
-  plugins: [react(), dramaFriendsModeApi()],
+export default defineConfig(({ mode }) => {
+  Object.assign(process.env, loadEnv(mode, process.cwd(), ""));
+
+  return {
+    plugins: [react(), dramaFriendsModeApi()],
+  };
 });

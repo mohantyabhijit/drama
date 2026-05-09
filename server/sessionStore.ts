@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { execFileSync } from "node:child_process";
 import { neon } from "@neondatabase/serverless";
+import { getFriendDisplayName } from "../src/friendsMode.js";
 
 export type SessionStatus = "active" | "ending" | "ended";
 export type SessionSpeakerType = "user" | "agent" | "system";
@@ -91,6 +93,8 @@ type MemoryRow = {
 };
 
 let schemaReady: Promise<void> | null = null;
+let cachedOpenAiApiKey: string | null | undefined;
+const OPENAI_KEYCHAIN_SERVICE_CANDIDATES = ["OPENAI_API_KEY", "openai_api_key", "openai"];
 
 function getSql() {
   const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
@@ -271,19 +275,44 @@ function summarizeSession(events: SessionEvent[]): string {
     .filter((event) => event.speakerType !== "system")
     .slice(0, 12)
     .map((event) => {
-      const speaker = event.speakerType === "agent" ? event.agentId ?? "agent" : "user";
-      return `${speaker}: ${event.content.replace(/\s+/g, " ").trim()}`;
+      const speaker = event.speakerType === "agent" ? getFriendDisplayName(event.agentId) : "You";
+      return `${speaker} said: ${event.content.replace(/\s+/g, " ").trim()}`;
     });
 
   if (useful.length === 0) {
     return "Session ended without durable conversation details.";
   }
 
-  return useful.join("\n").slice(0, 1800);
+  return useful.join(" ").slice(0, 1800);
 }
 
 function getOpenAiApiKey(): string | null {
-  return process.env.OPENAI_API_KEY?.trim() || null;
+  if (cachedOpenAiApiKey !== undefined) {
+    return cachedOpenAiApiKey;
+  }
+
+  if (process.env.OPENAI_API_KEY?.trim()) {
+    cachedOpenAiApiKey = process.env.OPENAI_API_KEY.trim();
+    return cachedOpenAiApiKey;
+  }
+
+  for (const service of OPENAI_KEYCHAIN_SERVICE_CANDIDATES) {
+    try {
+      const value = execFileSync("security", ["find-generic-password", "-w", "-s", service], {
+        encoding: "utf8",
+      }).trim();
+
+      if (value) {
+        cachedOpenAiApiKey = value;
+        return value;
+      }
+    } catch {
+      // Try the next keychain service name.
+    }
+  }
+
+  cachedOpenAiApiKey = null;
+  return null;
 }
 
 function formatTranscript(events: SessionEvent[]): string {
@@ -291,10 +320,10 @@ function formatTranscript(events: SessionEvent[]): string {
     .filter((event) => event.speakerType !== "system")
     .map((event) => {
       const speaker =
-        event.speakerType === "agent" ? event.agentId ?? "agent" : event.speakerType;
+        event.speakerType === "agent" ? getFriendDisplayName(event.agentId) : "You";
       return `${speaker}: ${event.content.replace(/\s+/g, " ").trim()}`;
     })
-    .join("\n");
+    .join("\n\n");
 }
 
 async function generateTextWithOpenAi(input: {
@@ -400,21 +429,21 @@ async function generateSessionArtifacts(events: SessionEvent[]): Promise<{
   const summaryEnglish = await generateTextWithOpenAi({
     apiKey,
     instructions:
-      "Create a durable session summary for a friend-style AI council app. Be concise, specific, and useful when the user reopens the session. Mention decisions, useful advice, follow-ups, and unresolved questions. Do not invent facts.",
-    prompt: `Summarize this session in English in 4-7 short bullets.\n\nTranscript:\n${transcript.slice(0, 12000)}`,
+      "Create a durable session summary for a friend-style AI council app. Write in one or two natural paragraphs, not bullets. Be concise, specific, and useful when the user reopens the session. Mention decisions, useful advice, follow-ups, unresolved questions, and the friend names Bobo, Sandy, or Adi when they spoke. Do not invent facts.",
+    prompt: `Summarize this session in English as big readable paragraphs, not bullet points.\n\nTranscript:\n${transcript.slice(0, 12000)}`,
   });
 
   const [summaryChinese, summaryHindi, audio] = await Promise.all([
     generateTextWithOpenAi({
       apiKey,
       instructions:
-        "Translate the supplied English session summary into Simplified Chinese. Preserve names, product names, and bullet structure. Do not add new information.",
+        "Translate the supplied English session summary into Simplified Chinese. Preserve names, product names, and paragraph structure. Do not add new information.",
       prompt: summaryEnglish,
     }),
     generateTextWithOpenAi({
       apiKey,
       instructions:
-        "Translate the supplied English session summary into Hindi. Preserve names, product names, and bullet structure. Do not add new information.",
+        "Translate the supplied English session summary into Hindi. Preserve names, product names, and paragraph structure. Do not add new information.",
       prompt: summaryEnglish,
     }),
     generateSpeechWithOpenAi({ apiKey, text: summaryEnglish }),

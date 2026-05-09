@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   FRIENDS_MODE_AGENTS,
+  getFriendDisplayName,
   type FriendVoiceAgentBlueprint,
   type FriendsModeInitResponse,
 } from "./friendsMode";
@@ -85,6 +86,18 @@ const USER_PARTICIPANT = {
   name: "You",
   role: "Original question",
 };
+
+function getSessionSpeakerName(event: SessionEvent): string {
+  if (event.speakerType === "agent") {
+    return getFriendDisplayName(event.agentId);
+  }
+
+  if (event.speakerType === "user") {
+    return USER_PARTICIPANT.name;
+  }
+
+  return "System";
+}
 
 function createFriendPrepMap(
   defaultState: FriendPrepState = "idle",
@@ -306,7 +319,7 @@ function App() {
     const sessionContext = sessionEvents
       .slice(-10)
       .map((event) => {
-        const speaker = event.speakerType === "agent" ? event.agentId ?? "agent" : event.speakerType;
+        const speaker = getSessionSpeakerName(event);
         return `${speaker}: ${event.content}`;
       })
       .join("\n");
@@ -315,6 +328,7 @@ function App() {
       blueprint
         ? `You are ${blueprint.name}, the ${blueprint.role}.`
         : "You are a council member.",
+      "Friend roster: Bobo is the optimist supporter, Sandy is the pessimist nihilist, and Adi is the one-word chaos friend. Abhijit may refer to any of them by speaking their names.",
       memoryContext ? `Long-term memory from prior ended sessions:\n${memoryContext}` : "",
       sessionContext ? `What everyone in this session has heard so far:\n${sessionContext}` : "",
       `The latest user question is: "${latestQuestion || "Share your first take."}"`,
@@ -820,7 +834,9 @@ function CouncilHome({
           <>
             <div className="home-intro">
               <p className="eyebrow">Ask the council</p>
-              <h1 id="home-title">Put one decision in the room.</h1>
+              <h2 className="home-title" id="home-title">
+                Talk to your council of closest friends.
+              </h2>
               <p className="home-subtitle">Decision Review by Artificial Moronic Advisors</p>
             </div>
 
@@ -1129,12 +1145,7 @@ function SessionTranscript({
   events: SessionEvent[];
   session: DramaSession | null;
 }) {
-  const isEnded = session?.status === "ended";
-  const visibleEvents = isEnded ? events : events.slice(-5);
-  const audioSource =
-    session?.summaryAudioBase64 && session.summaryAudioMime
-      ? `data:${session.summaryAudioMime};base64,${session.summaryAudioBase64}`
-      : null;
+  const visibleEvents = events.slice(-5);
 
   if (events.length === 0 && !session?.summaryEnglish) {
     return null;
@@ -1142,46 +1153,18 @@ function SessionTranscript({
 
   return (
     <section
-      className={`session-transcript ${isEnded ? "full" : ""}`}
-      aria-label={isEnded ? "Ended session transcript and summaries" : "Shared session context"}
+      className="session-transcript"
+      aria-label="Shared session context"
     >
       <div className="session-transcript-header">
-        <strong>{isEnded ? "Session archive" : "Shared room context"}</strong>
+        <strong>Shared room context</strong>
         <small>{events.length} saved turn{events.length === 1 ? "" : "s"}</small>
       </div>
-
-      {isEnded && session?.summaryEnglish ? (
-        <div className="session-summary-panel">
-          <div className="summary-block">
-            <strong>English summary</strong>
-            <p>{session.summaryEnglish}</p>
-          </div>
-          {audioSource ? (
-            <div className="summary-block">
-              <strong>Voice summary</strong>
-              <audio controls src={audioSource} />
-              <small>AI-generated English audio summary.</small>
-            </div>
-          ) : null}
-          {session.summaryChinese ? (
-            <div className="summary-block">
-              <strong>Chinese</strong>
-              <p lang="zh-Hans">{session.summaryChinese}</p>
-            </div>
-          ) : null}
-          {session.summaryHindi ? (
-            <div className="summary-block">
-              <strong>Hindi</strong>
-              <p lang="hi">{session.summaryHindi}</p>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
 
       <div className="session-transcript-list">
         {visibleEvents.map((event) => (
           <article className={`transcript-event ${event.speakerType}`} key={event.id}>
-            <strong>{event.agentId ?? event.speakerType}</strong>
+            <strong>{getSessionSpeakerName(event)}</strong>
             <p>{event.content}</p>
           </article>
         ))}
