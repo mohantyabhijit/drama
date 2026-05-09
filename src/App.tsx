@@ -6,9 +6,12 @@ import {
   Loader2,
   Mic,
   PanelLeftOpen,
+  Pause,
   PhoneOff,
+  Play,
   Plus,
   Send,
+  Square,
   Users,
   X,
 } from "lucide-react";
@@ -978,6 +981,7 @@ function ArchiveSessionDetail({
   session: DramaSession;
 }) {
   const [activeSpeechId, setActiveSpeechId] = useState<string | null>(null);
+  const [isSpeechPaused, setIsSpeechPaused] = useState(false);
   const speechRunIdRef = useRef(0);
   const participantAgents = FRIENDS_MODE_AGENTS.filter((agent) =>
     events.some((event) => event.agentId === agent.id),
@@ -1003,21 +1007,50 @@ function ArchiveSessionDetail({
     utterance.onend = () => {
       if (speechRunIdRef.current === runId) {
         setActiveSpeechId(null);
+        setIsSpeechPaused(false);
       }
     };
     utterance.onerror = () => {
       if (speechRunIdRef.current === runId) {
         setActiveSpeechId(null);
+        setIsSpeechPaused(false);
+      }
+    };
+    utterance.onpause = () => {
+      if (speechRunIdRef.current === runId) {
+        setIsSpeechPaused(true);
+      }
+    };
+    utterance.onresume = () => {
+      if (speechRunIdRef.current === runId) {
+        setIsSpeechPaused(false);
       }
     };
     setActiveSpeechId(speechId);
+    setIsSpeechPaused(false);
     window.speechSynthesis.speak(utterance);
+  };
+
+  const playSpeech = (text: string | null, lang: string, speechId: string): void => {
+    if (activeSpeechId === speechId && isSpeechPaused) {
+      window.speechSynthesis?.resume();
+      setIsSpeechPaused(false);
+      return;
+    }
+
+    speakSummary(text, lang, speechId);
+  };
+
+  const pauseSpeech = (): void => {
+    window.speechSynthesis?.pause();
+    setIsSpeechPaused(true);
   };
 
   const stopSpeech = (): void => {
     speechRunIdRef.current += 1;
     window.speechSynthesis?.cancel();
     setActiveSpeechId(null);
+    setIsSpeechPaused(false);
   };
 
   useEffect(() => {
@@ -1032,28 +1065,43 @@ function ArchiveSessionDetail({
     lang: string,
     speechId: string,
     label: string,
-  ) => (
-    <span className="voice-action-row">
-      <button
-        className="voice-action"
-        type="button"
-        disabled={!text?.trim()}
-        onClick={() => speakSummary(text, lang, speechId)}
-      >
-        Listen Summary
-      </button>
-      <button
-        className="voice-stop-button"
-        type="button"
-        disabled={activeSpeechId !== speechId}
-        onClick={stopSpeech}
-        aria-label={`Stop ${label} summary`}
-      >
-        <PhoneOff size={14} aria-hidden="true" />
-        Stop
-      </button>
-    </span>
-  );
+  ) => {
+    const isCurrentSpeech = activeSpeechId === speechId;
+
+    return (
+      <span className="voice-action-row" aria-label={`${label} summary player`}>
+        <button
+          className="voice-action voice-action-primary"
+          type="button"
+          disabled={!text?.trim() || (isCurrentSpeech && !isSpeechPaused)}
+          onClick={() => playSpeech(text, lang, speechId)}
+        >
+          <Play size={15} aria-hidden="true" />
+          Play
+        </button>
+        <button
+          className="voice-action voice-action-secondary"
+          type="button"
+          disabled={!isCurrentSpeech || isSpeechPaused}
+          onClick={pauseSpeech}
+          aria-label={`Pause ${label} summary`}
+        >
+          <Pause size={15} aria-hidden="true" />
+          Pause
+        </button>
+        <button
+          className="voice-action voice-action-secondary voice-action-stop"
+          type="button"
+          disabled={!isCurrentSpeech}
+          onClick={stopSpeech}
+          aria-label={`Stop ${label} summary`}
+        >
+          <Square size={14} aria-hidden="true" />
+          Stop
+        </button>
+      </span>
+    );
+  };
 
   return (
     <section className="archive-detail" aria-label="Saved chat summary">
