@@ -9,7 +9,10 @@
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
+    "@21st-extension/toolbar": "^0.5.14",
+    "@neondatabase/serverless": "^1.1.0",
     "@vitejs/plugin-react": "^5.1.1",
+    "framer-motion": "^12.38.0",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

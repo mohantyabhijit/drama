@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="Noah portrait">
+  <defs>
+    <linearGradient id="bg" x1="20" y1="8" x2="142" y2="152" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#77c7bd"/>
+      <stop offset=".55" stop-color="#4d7e8f"/>
+      <stop offset="1" stop-color="#24384b"/>
+    </linearGradient>
+    <radialGradient id="light" cx="48" cy="36" r="84" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#e8fff8" stop-opacity=".9"/>
+      <stop offset=".65" stop-color="#e8fff8" stop-opacity=".08"/>
+      <stop offset="1" stop-color="#e8fff8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="160" height="160" fill="url(#bg)"/>
+  <circle cx="48" cy="34" r="78" fill="url(#light)"/>
+  <path fill="#2c2a26" d="M40 70c2-31 18-49 43-49 26 0 42 18 43 49l-9 49H49L40 70Z"/>
+  <path fill="#d79b70" d="M51 75c0-22 13-38 32-38s32 16 32 38c0 28-13 48-32 48S51 103 51 75Z"/>
+  <path fill="#ba765a" d="M79 79h8l-4 18-8-1 4-17Z" opacity=".65"/>
+  <path fill="#231a18" d="M62 77c6-4 13-4 19 0-6 2-13 2-19 0Zm29 0c5-4 13-4 18 0-5 2-13 2-18 0Z"/>
+  <path fill="#6b342f" d="M72 107c7 4 16 4 23 0-3 8-17 8-23 0Z"/>
+  <path fill="#1f3445" d="M24 138c15-20 35-30 59-30 23 0 43 10 56 30v22H24v-22Z"/>
+  <path fill="#dfeee9" d="M57 124h52l-10 36H67l-10-36Z"/>
+  <path fill="#263844" d="M42 60c10-17 22-25 39-25 19 0 33 9 44 27-16-9-31-13-45-13-13 0-26 4-38 11Z"/>
+</svg>

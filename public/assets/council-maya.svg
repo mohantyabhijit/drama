@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="Maya portrait">
+  <defs>
+    <linearGradient id="bg" x1="24" y1="8" x2="138" y2="148" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f6c86d"/>
+      <stop offset=".55" stop-color="#df7558"/>
+      <stop offset="1" stop-color="#5d2f27"/>
+    </linearGradient>
+    <radialGradient id="light" cx="54" cy="38" r="88" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff8dd" stop-opacity=".95"/>
+      <stop offset=".62" stop-color="#fff8dd" stop-opacity=".08"/>
+      <stop offset="1" stop-color="#fff8dd" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="160" height="160" fill="url(#bg)"/>
+  <circle cx="48" cy="38" r="72" fill="url(#light)"/>
+  <path fill="#55322a" d="M34 71c0-35 19-54 48-54 31 0 50 21 50 56 0 25-12 46-25 60H57C44 117 34 95 34 71Z"/>
+  <path fill="#7a3f2f" d="M38 67c4-27 20-43 44-43 25 0 41 17 45 44-12-15-24-21-43-21-20 0-34 6-46 20Z"/>
+  <path fill="#f2b37e" d="M50 76c0-23 13-39 32-39 20 0 33 16 33 39 0 27-14 48-33 48S50 103 50 76Z"/>
+  <path fill="#dd8d66" d="M78 80h8l-4 18-8-1 4-17Z" opacity=".65"/>
+  <path fill="#2b1d19" d="M61 77c5-5 14-5 19 0-5 2-13 2-19 0Zm28 0c5-5 14-5 19 0-5 2-13 2-19 0Z"/>
+  <path fill="#8b3c31" d="M70 107c9 6 18 6 27 0-4 10-20 10-27 0Z"/>
+  <path fill="#f6c86d" d="M25 135c16-18 35-27 57-27s41 9 55 27v25H25v-25Z"/>
+  <path fill="#fff6df" d="M50 129c17 10 45 10 62 0l-9 31H59l-9-31Z"/>
+</svg>

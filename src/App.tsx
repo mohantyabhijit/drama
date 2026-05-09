@@ -1,773 +1,917 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AudioLines, Loader2, Mic, PhoneOff, Send } from "lucide-react";
 import {
-  Activity,
-  AudioLines,
-  BookOpen,
-  Brain,
-  Check,
-  ChevronRight,
-  Download,
-  ExternalLink,
-  FileText,
-  Gauge,
-  Mic,
-  PanelRight,
-  Pause,
-  PhoneOff,
-  Play,
-  Plus,
-  Radio,
-  RotateCcw,
-  Settings,
-  Shield,
-  SlidersHorizontal,
-  Users,
-  Zap,
-} from "lucide-react";
+  FRIENDS_MODE_AGENTS,
+  type FriendVoiceAgentBlueprint,
+  type FriendsModeInitResponse,
+} from "./friendsMode";
+import { initializeFriendsMode } from "./friendsModeClient";
 import {
-  architecture,
-  checklist,
-  groupTranscript,
-  innerPersonas,
-  innerTranscript,
-  personas,
-  providers,
-  receipts,
-  type Chamber,
-  type Persona,
-  type Tier,
-  type TranscriptTurn,
-} from "./data";
+  startVoicePreviewSession,
+  type VoicePreviewSession,
+} from "./realtimeVoice";
+import {
+  appendSessionEvent,
+  createSession,
+  endSession,
+  getSessionBundle,
+  listMemories,
+  listSessions,
+} from "./sessionClient";
+import type { DramaSession, LongTermMemory, SessionEvent } from "./sessionTypes";
 
-const chamberCopy: Record<Chamber, { title: string; body: string; prompt: string }> = {
-  group: {
-    title: "Group D.R.A.M.A.",
-    body: "A chaotic friend council roasts, improves, and votes on an idea in one tight voice room.",
-    prompt: "I want to build an AI app where my friends roast my startup ideas.",
-  },
-  inner: {
-    title: "Inner D.R.A.M.A.",
-    body: "Your own self-facets debate a decision with useful tension between risk, ambition, care, and time.",
-    prompt: "Should I quit my job to build this?",
-  },
+type FriendPrepState = "idle" | "thinking" | "ready";
+
+type BrowserSpeechRecognition = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onstart: (() => void) | null;
+  onend: (() => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onresult: ((event: any) => void) | null;
+  start: () => void;
+  stop: () => void;
 };
 
-const sentimentColor = {
-  skeptical: "#ef4444",
-  cautious: "#f59e0b",
-  positive: "#14b8a6",
+type BrowserSpeechRecognitionWindow = Window & {
+  SpeechRecognition?: new () => BrowserSpeechRecognition;
+  webkitSpeechRecognition?: new () => BrowserSpeechRecognition;
 };
+
+type CouncilHomeProps = {
+  activeVoiceAgentId: string | null;
+  error: string | null;
+  events: SessionEvent[];
+  isConnectingVoice: boolean;
+  isCouncilThinking: boolean;
+  isEndingSession: boolean;
+  isLoading: boolean;
+  isSessionLoading: boolean;
+  isPromptRecording: boolean;
+  onAskQuestion: () => void;
+  onCreateSession: () => void;
+  onEndSession: () => void;
+  onPreviewVoice: (agentId: string) => void;
+  onEndLiveSession: () => void;
+  onQuestionChange: (question: string) => void;
+  onSelectSession: (sessionId: string) => void;
+  onStartVoicePrompt: () => void;
+  onStopVoicePrompt: () => void;
+  prepById: Record<string, FriendPrepState>;
+  question: string;
+  selectedSession: DramaSession | null;
+  sessions: DramaSession[];
+  statusMessage: string | null;
+  supportsVoicePromptInput: boolean;
+};
+
+const FRIEND_THINK_DELAYS_MS = [760, 1080, 1360, 1660, 1960];
+
+const councilPortraits: Record<string, string> = {
+  "chaotic-optimist": "/assets/council-maya.svg",
+  "pragmatic-builder": "/assets/council-noah.svg",
+  "critical-thinker": "/assets/council-ari.svg",
+  storyteller: "/assets/council-zoe.svg",
+  "calm-mediator": "/assets/council-ivy.svg",
+};
+
+function createFriendPrepMap(
+  defaultState: FriendPrepState = "idle",
+): Record<string, FriendPrepState> {
+  return Object.fromEntries(
+    FRIENDS_MODE_AGENTS.map((agent) => [agent.id, defaultState]),
+  ) as Record<string, FriendPrepState>;
+}
+
+function getOrCreateLocalUserId(): string {
+  const storageKey = "drama.localUserId";
+  const existing = window.localStorage.getItem(storageKey);
+  if (existing) {
+    return existing;
+  }
+
+  const next = globalThis.crypto?.randomUUID?.() ?? `drama-${Date.now()}`;
+  window.localStorage.setItem(storageKey, next);
+  return next;
+}
 
 function App() {
-  const [chamber, setChamber] = useState<Chamber>("group");
-  const [tier, setTier] = useState<Tier>("pro");
-  const [isPlaying, setIsPlaying] = useState(true);
-  const [turnIndex, setTurnIndex] = useState(2);
-  const [selectedPersonaId, setSelectedPersonaId] = useState("cynic");
-  const [turnLength, setTurnLength] = useState("Medium");
-  const [personaValues, setPersonaValues] = useState<Record<string, number>>(
-    Object.fromEntries([...personas, ...innerPersonas].map((persona) => [persona.id, persona.caution])),
+  const [friendsInit, setFriendsInit] = useState<FriendsModeInitResponse | null>(null);
+  const [friendsInitLoading, setFriendsInitLoading] = useState(false);
+  const [friendsInitError, setFriendsInitError] = useState<string | null>(null);
+  const [friendsStatusMessage, setFriendsStatusMessage] = useState<string | null>(null);
+  const [activeVoiceAgentId, setActiveVoiceAgentId] = useState<string | null>(null);
+  const [isConnectingVoice, setIsConnectingVoice] = useState(false);
+  const [friendsQuestion, setFriendsQuestion] = useState("");
+  const [isCouncilThinking, setIsCouncilThinking] = useState(false);
+  const [lastCouncilQuestion, setLastCouncilQuestion] = useState("");
+  const [isPromptRecording, setIsPromptRecording] = useState(false);
+  const [prepById, setPrepById] = useState<Record<string, FriendPrepState>>(
+    () => createFriendPrepMap(),
   );
-  const [enabledPersonas, setEnabledPersonas] = useState<Record<string, boolean>>(
-    Object.fromEntries([...personas, ...innerPersonas].map((persona) => [persona.id, true])),
-  );
-  const [addedPersona, setAddedPersona] = useState(false);
+  const [friendsUserId] = useState(() => getOrCreateLocalUserId());
+  const [sessions, setSessions] = useState<DramaSession[]>([]);
+  const [selectedSession, setSelectedSession] = useState<DramaSession | null>(null);
+  const [sessionEvents, setSessionEvents] = useState<SessionEvent[]>([]);
+  const [longTermMemories, setLongTermMemories] = useState<LongTermMemory[]>([]);
+  const [isSessionLoading, setIsSessionLoading] = useState(false);
+  const [isEndingSession, setIsEndingSession] = useState(false);
+  const voicePreviewRef = useRef<VoicePreviewSession | null>(null);
+  const friendPrepTimersRef = useRef<number[]>([]);
+  const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
 
-  const visiblePersonas = useMemo(() => {
-    const base = chamber === "group" ? personas : innerPersonas;
-    return addedPersona
-      ? [
-          ...base,
-          {
-            id: "wildcard",
-            name: "Wildcard Advisor",
-            role: "Pattern breaker",
-            bias: "Make it stranger",
-            chamber,
-            color: "#2563eb",
-            caution: 57,
-            line: "The obvious version is crowded. What is the unfairly memorable version?",
-            blindSpot: "Can over-design the punchline.",
-          } satisfies Persona,
-        ]
-      : base;
-  }, [addedPersona, chamber]);
+  const supportsVoicePromptInput = useMemo(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
 
-  const transcript = chamber === "group" ? groupTranscript : innerTranscript;
-  const activeTurn = transcript[Math.min(turnIndex, transcript.length - 1)];
-  const selectedPersona = visiblePersonas.find((persona) => persona.id === selectedPersonaId) ?? visiblePersonas[0];
-  const visibleTurns = transcript.slice(0, Math.min(turnIndex + 1, transcript.length));
-  const checkedCount = tier === "pro" ? 6 : 5;
+    const browserWindow = window as BrowserSpeechRecognitionWindow;
+    return Boolean(browserWindow.SpeechRecognition || browserWindow.webkitSpeechRecognition);
+  }, []);
+
+  const clearFriendPrepTimers = (): void => {
+    friendPrepTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+    friendPrepTimersRef.current = [];
+  };
+
+  const refreshSessions = async (preferredSessionId?: string): Promise<void> => {
+    setIsSessionLoading(true);
+    setFriendsInitError(null);
+
+    try {
+      let loadedSessions = await listSessions(friendsUserId);
+      if (loadedSessions.length === 0) {
+        const session = await createSession({ userId: friendsUserId });
+        loadedSessions = [session];
+      }
+
+      setSessions(loadedSessions);
+
+      const nextSession =
+        loadedSessions.find((session) => session.id === preferredSessionId) ??
+        loadedSessions.find((session) => session.status === "active") ??
+        loadedSessions[0] ??
+        null;
+
+      if (!nextSession) {
+        setSelectedSession(null);
+        setSessionEvents([]);
+        return;
+      }
+
+      const bundle = await getSessionBundle({
+        userId: friendsUserId,
+        sessionId: nextSession.id,
+      });
+      setSelectedSession(bundle.session);
+      setSessionEvents(bundle.events);
+      setLongTermMemories(await listMemories(friendsUserId));
+    } catch (error) {
+      setFriendsInitError(
+        error instanceof Error ? error.message : "Failed to load saved sessions.",
+      );
+    } finally {
+      setIsSessionLoading(false);
+    }
+  };
+
+  const handleCreateSession = async (): Promise<void> => {
+    setIsSessionLoading(true);
+    setFriendsInitError(null);
+    setFriendsQuestion("");
+    setLastCouncilQuestion("");
+    clearFriendPrepTimers();
+    setPrepById(createFriendPrepMap());
+    setIsCouncilThinking(false);
+    voicePreviewRef.current?.close();
+    voicePreviewRef.current = null;
+    setActiveVoiceAgentId(null);
+
+    try {
+      const session = await createSession({ userId: friendsUserId });
+      setSelectedSession(session);
+      setSessionEvents([]);
+      setSessions((current) => [session, ...current]);
+      setFriendsStatusMessage("New talk started. Ask the council anything.");
+    } catch (error) {
+      setFriendsInitError(error instanceof Error ? error.message : "Failed to create session.");
+    } finally {
+      setIsSessionLoading(false);
+    }
+  };
+
+  const handleSelectSession = async (sessionId: string): Promise<void> => {
+    setIsSessionLoading(true);
+    setFriendsInitError(null);
+    clearFriendPrepTimers();
+    voicePreviewRef.current?.close();
+    voicePreviewRef.current = null;
+    setActiveVoiceAgentId(null);
+    setIsCouncilThinking(false);
+    setPrepById(createFriendPrepMap());
+
+    try {
+      const bundle = await getSessionBundle({ userId: friendsUserId, sessionId });
+      setSelectedSession(bundle.session);
+      setSessionEvents(bundle.events);
+      setFriendsQuestion("");
+      setLastCouncilQuestion(bundle.session.originalQuestion ?? "");
+      setFriendsStatusMessage(
+        bundle.session.status === "ended"
+          ? "This session has ended and was saved to memory."
+          : "Session loaded.",
+      );
+    } catch (error) {
+      setFriendsInitError(error instanceof Error ? error.message : "Failed to load session.");
+    } finally {
+      setIsSessionLoading(false);
+    }
+  };
+
+  const ensureActiveSession = async (originalQuestion?: string): Promise<DramaSession> => {
+    if (selectedSession?.status === "active") {
+      return selectedSession;
+    }
+
+    const session = await createSession({
+      userId: friendsUserId,
+      originalQuestion: originalQuestion ?? null,
+    });
+    setSelectedSession(session);
+    setSessionEvents([]);
+    setSessions((current) => [session, ...current]);
+    return session;
+  };
+
+  const replaceSessionInList = (session: DramaSession): void => {
+    setSessions((current) => {
+      const next = current.filter((item) => item.id !== session.id);
+      return [session, ...next].sort(
+        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      );
+    });
+  };
+
+  const handleEndSession = async (): Promise<void> => {
+    if (!selectedSession || selectedSession.status !== "active") {
+      return;
+    }
+
+    setIsEndingSession(true);
+    setFriendsInitError(null);
+    voicePreviewRef.current?.close();
+    voicePreviewRef.current = null;
+    setActiveVoiceAgentId(null);
+
+    try {
+      const result = await endSession({
+        userId: friendsUserId,
+        sessionId: selectedSession.id,
+      });
+      setSelectedSession(result.session);
+      replaceSessionInList(result.session);
+      setLongTermMemories(await listMemories(friendsUserId));
+      setFriendsStatusMessage("Session ended and saved to long-term memory.");
+    } catch (error) {
+      setFriendsInitError(error instanceof Error ? error.message : "Failed to end session.");
+    } finally {
+      setIsEndingSession(false);
+    }
+  };
+
+  const buildSharedOpeningLine = (
+    blueprint: FriendVoiceAgentBlueprint | undefined,
+    latestQuestion: string,
+  ): string => {
+    const memoryContext = longTermMemories
+      .slice(0, 8)
+      .map((memory) => `- ${memory.content}`)
+      .join("\n");
+    const sessionContext = sessionEvents
+      .slice(-10)
+      .map((event) => {
+        const speaker = event.speakerType === "agent" ? event.agentId ?? "agent" : event.speakerType;
+        return `${speaker}: ${event.content}`;
+      })
+      .join("\n");
+
+    return [
+      blueprint
+        ? `You are ${blueprint.name}, the ${blueprint.role}.`
+        : "You are a council member.",
+      memoryContext ? `Long-term memory from prior ended sessions:\n${memoryContext}` : "",
+      sessionContext ? `What everyone in this session has heard so far:\n${sessionContext}` : "",
+      `The latest user question is: "${latestQuestion || "Share your first take."}"`,
+      "Give one short spoken take, naturally acknowledging relevant prior agent advice if useful, then invite the user to continue in realtime.",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  };
+
+  const captureRealtimeTranscript = (agentId: string, event: Record<string, unknown>): void => {
+    const type = typeof event.type === "string" ? event.type : "";
+    if (!type.includes("transcript") || !type.endsWith(".done")) {
+      return;
+    }
+
+    const transcript =
+      typeof event.transcript === "string"
+        ? event.transcript
+        : typeof event.text === "string"
+          ? event.text
+          : null;
+
+    if (!transcript || !selectedSession || selectedSession.status !== "active") {
+      return;
+    }
+
+    void appendSessionEvent({
+      userId: friendsUserId,
+      sessionId: selectedSession.id,
+      speakerType: type.startsWith("response.") ? "agent" : "user",
+      agentId: type.startsWith("response.") ? agentId : null,
+      content: transcript,
+      metadata: { realtimeEventType: type },
+    })
+      .then((savedEvent) => {
+        setSessionEvents((current) => [...current, savedEvent]);
+      })
+      .catch(() => {
+        // Keep the live voice session running even if transcript persistence fails.
+      });
+  };
+
+  const handleInitializeFriends = async (): Promise<FriendsModeInitResponse | null> => {
+    clearFriendPrepTimers();
+    voicePreviewRef.current?.close();
+    voicePreviewRef.current = null;
+    setActiveVoiceAgentId(null);
+    setIsCouncilThinking(false);
+    setPrepById(createFriendPrepMap());
+    setFriendsInitLoading(true);
+    setFriendsInitError(null);
+    setFriendsStatusMessage(null);
+
+    try {
+      const payload = await initializeFriendsMode(friendsUserId);
+      setFriendsInit(payload);
+      setFriendsStatusMessage("Friends Mode initialized. Ask the council a question.");
+      return payload;
+    } catch (error) {
+      setFriendsInitError(
+        error instanceof Error ? error.message : "Failed to initialize Friends Mode.",
+      );
+      return null;
+    } finally {
+      setFriendsInitLoading(false);
+    }
+  };
+
+  const handleAskQuestion = async () => {
+    const question = friendsQuestion.trim();
+    if (!question) {
+      setFriendsInitError("Add your question first.");
+      setFriendsStatusMessage(null);
+      return;
+    }
+
+    if (friendsInitLoading) {
+      return;
+    }
+
+    let activeSession: DramaSession;
+    try {
+      activeSession = await ensureActiveSession(question);
+      const savedEvent = await appendSessionEvent({
+        userId: friendsUserId,
+        sessionId: activeSession.id,
+        speakerType: "user",
+        content: question,
+      });
+      setSessionEvents((current) => [...current, savedEvent]);
+      const updatedSession = {
+        ...activeSession,
+        title: activeSession.originalQuestion ? activeSession.title : question.slice(0, 54),
+        originalQuestion: activeSession.originalQuestion ?? question,
+        updatedAt: savedEvent.createdAt,
+      };
+      setSelectedSession(updatedSession);
+      replaceSessionInList(updatedSession);
+    } catch (error) {
+      setFriendsInitError(error instanceof Error ? error.message : "Failed to save question.");
+      setFriendsStatusMessage(null);
+      return;
+    }
+
+    let initPayload = friendsInit;
+    if (!initPayload) {
+      initPayload = await handleInitializeFriends();
+      if (!initPayload) {
+        return;
+      }
+    }
+
+    clearFriendPrepTimers();
+    voicePreviewRef.current?.close();
+    voicePreviewRef.current = null;
+    setActiveVoiceAgentId(null);
+    setFriendsInitError(null);
+    setIsCouncilThinking(true);
+    setLastCouncilQuestion(question);
+    setPrepById(createFriendPrepMap("thinking"));
+    setFriendsStatusMessage("Council is thinking...");
+
+    FRIENDS_MODE_AGENTS.forEach((agent, index) => {
+      const delay =
+        FRIEND_THINK_DELAYS_MS[index] ??
+        FRIEND_THINK_DELAYS_MS[FRIEND_THINK_DELAYS_MS.length - 1] + index * 180;
+      const timerId = window.setTimeout(() => {
+        setPrepById((current) => {
+          const next = { ...current, [agent.id]: "ready" as const };
+          const everyoneReady = FRIENDS_MODE_AGENTS.every(
+            (friend) => next[friend.id] === "ready",
+          );
+          if (everyoneReady) {
+            setIsCouncilThinking(false);
+            setFriendsStatusMessage("Council ready. Tap a member to talk.");
+          }
+          return next;
+        });
+      }, delay);
+      friendPrepTimersRef.current.push(timerId);
+    });
+  };
+
+  const handleStartVoicePrompt = () => {
+    if (!supportsVoicePromptInput) {
+      setFriendsInitError("Voice prompt input is not supported in this browser.");
+      return;
+    }
+
+    if (isPromptRecording) {
+      return;
+    }
+
+    const browserWindow = window as BrowserSpeechRecognitionWindow;
+    const SpeechRecognitionCtor =
+      browserWindow.SpeechRecognition || browserWindow.webkitSpeechRecognition;
+
+    if (!SpeechRecognitionCtor) {
+      setFriendsInitError("Voice prompt input is not supported in this browser.");
+      return;
+    }
+
+    const recognition = new SpeechRecognitionCtor();
+    speechRecognitionRef.current = recognition;
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = "en-US";
+
+    recognition.onstart = () => {
+      setIsPromptRecording(true);
+      setFriendsInitError(null);
+      setFriendsStatusMessage("Listening... speak your prompt.");
+    };
+
+    recognition.onresult = (event) => {
+      const currentResult = event.results[event.resultIndex];
+      const transcript = currentResult?.[0]?.transcript?.trim();
+      if (!transcript) {
+        return;
+      }
+
+      setFriendsQuestion((previous) => {
+        const current = previous.trim();
+        return current.length > 0 ? `${current} ${transcript}` : transcript;
+      });
+      setFriendsStatusMessage("Prompt captured. Review it, then ask the council.");
+    };
+
+    recognition.onerror = (event) => {
+      setFriendsInitError(event.error ? `Voice input error: ${event.error}.` : "Voice input failed.");
+      setFriendsStatusMessage(null);
+    };
+
+    recognition.onend = () => {
+      setIsPromptRecording(false);
+      speechRecognitionRef.current = null;
+    };
+
+    recognition.start();
+  };
+
+  const handleStopVoicePrompt = () => {
+    speechRecognitionRef.current?.stop();
+  };
+
+  const handlePreviewVoice = async (agentId: string) => {
+    if (!selectedSession || selectedSession.status !== "active") {
+      setFriendsInitError("Start an active talk before speaking with a council member.");
+      setFriendsStatusMessage(null);
+      return;
+    }
+
+    if (!friendsInit) {
+      setFriendsInitError("Ask the council first.");
+      setFriendsStatusMessage(null);
+      return;
+    }
+
+    if ((prepById[agentId] ?? "idle") !== "ready") {
+      setFriendsInitError("Wait for this member to be ready before starting live voice.");
+      setFriendsStatusMessage(null);
+      return;
+    }
+
+    const runtime = friendsInit.agents.find((agent) => agent.id === agentId);
+    if (!runtime) {
+      setFriendsInitError("This council member is not ready yet.");
+      setFriendsStatusMessage(null);
+      return;
+    }
+
+    const blueprint = FRIENDS_MODE_AGENTS.find((agent) => agent.id === agentId);
+    const openingLine = buildSharedOpeningLine(
+      blueprint,
+      lastCouncilQuestion || friendsQuestion.trim(),
+    );
+
+    setFriendsInitError(null);
+    setFriendsStatusMessage("Connecting to member...");
+    setIsConnectingVoice(true);
+
+    voicePreviewRef.current?.close();
+    voicePreviewRef.current = null;
+    setActiveVoiceAgentId(null);
+
+    try {
+      const session = await startVoicePreviewSession(runtime, {
+        openingLine,
+        onServerEvent: (event) => {
+          if (event.type === "error") {
+            const message =
+              typeof event.error === "object" &&
+              event.error !== null &&
+              "message" in event.error &&
+              typeof event.error.message === "string"
+                ? event.error.message
+                : "Realtime server reported an error.";
+            setFriendsInitError(message);
+          }
+          captureRealtimeTranscript(agentId, event);
+        },
+      });
+      voicePreviewRef.current = session;
+      setActiveVoiceAgentId(agentId);
+      setFriendsStatusMessage(`${blueprint?.name ?? "Council member"} is live. Speak now.`);
+    } catch (error) {
+      setFriendsInitError(
+        error instanceof Error ? error.message : "Failed to start live voice preview.",
+      );
+      setFriendsStatusMessage(null);
+    } finally {
+      setIsConnectingVoice(false);
+    }
+  };
+
+  const handleEndLiveSession = () => {
+    voicePreviewRef.current?.close();
+    voicePreviewRef.current = null;
+    setActiveVoiceAgentId(null);
+    setIsConnectingVoice(false);
+    setFriendsStatusMessage("Live session ended. Tap a ready member to talk again.");
+  };
 
   useEffect(() => {
-    setTurnIndex(2);
-    setSelectedPersonaId(chamber === "group" ? "cynic" : "anxious");
-  }, [chamber]);
+    void refreshSessions();
+  }, []);
 
   useEffect(() => {
-    if (!isPlaying) return;
-
-    const timer = window.setInterval(() => {
-      setTurnIndex((current) => (current >= transcript.length - 1 ? 0 : current + 1));
-    }, 2200);
-
-    return () => window.clearInterval(timer);
-  }, [isPlaying, transcript.length]);
+    return () => {
+      clearFriendPrepTimers();
+      speechRecognitionRef.current?.stop();
+      speechRecognitionRef.current = null;
+      voicePreviewRef.current?.close();
+      voicePreviewRef.current = null;
+    };
+  }, []);
 
   return (
     <div className="app">
-      <Header />
-
-      <main>
-        <section className="hero-shell" id="demo" aria-labelledby="hero-title">
-          <div className="hero-copy">
-            <div className="brand-lockup" aria-label="D.R.A.M.A. logo">
-              <span className="brand-mark">D</span>
-              <span>D.R.A.M.A.</span>
-            </div>
-            <h1 id="hero-title">D.R.A.M.A.</h1>
-            <p className="hero-subtitle">
-              <strong>Decision Review by Artificial Moronic Advisors.</strong> A realtime voice council of flawed
-              AI personas that pressure-test your decisions from every ridiculous angle.
-            </p>
-            <div className="hero-actions">
-              <button className="primary-action" type="button" onClick={() => setIsPlaying(true)}>
-                <span>Start a Live Council</span>
-                <AudioLines size={18} aria-hidden="true" />
-              </button>
-              <button className="ghost-action" type="button" onClick={() => setTurnIndex(0)}>
-                <span>Replay Demo Trace</span>
-                <Play size={17} aria-hidden="true" />
-              </button>
-            </div>
-            <ModeCards chamber={chamber} setChamber={setChamber} />
-          </div>
-
-          <LiveRoom
-            activeTurn={activeTurn}
-            chamber={chamber}
-            isPlaying={isPlaying}
-            personas={visiblePersonas}
-            selectedPersonaId={selectedPersonaId}
-            setIsPlaying={setIsPlaying}
-            setSelectedPersonaId={setSelectedPersonaId}
-            setTurnIndex={setTurnIndex}
-            tier={tier}
-          />
-
-          <TranscriptPanel turns={visibleTurns} />
-          <VerdictPanel chamber={chamber} tier={tier} />
-          <SummaryPanel activeTurn={activeTurn} transcript={transcript} />
-        </section>
-
-        <section className="workspace-grid" id="personas" aria-label="Demo setup workspace">
-          <PersonaSetup
-            enabledPersonas={enabledPersonas}
-            personas={visiblePersonas}
-            personaValues={personaValues}
-            selectedPersona={selectedPersona}
-            setAddedPersona={setAddedPersona}
-            setEnabledPersonas={setEnabledPersonas}
-            setPersonaValues={setPersonaValues}
-            setSelectedPersonaId={setSelectedPersonaId}
-          />
-          <ModeTierPanel chamber={chamber} setChamber={setChamber} setTier={setTier} setTurnLength={setTurnLength} tier={tier} turnLength={turnLength} />
-          <ResearchPanel tier={tier} />
-        </section>
-
-        <section className="lower-grid" id="architecture" aria-label="Architecture and readiness">
-          <ArchitecturePanel />
-          <ChecklistPanel checkedCount={checkedCount} />
-        </section>
-
-        <CallToAction setIsPlaying={setIsPlaying} />
-      </main>
+      <CouncilHome
+        activeVoiceAgentId={activeVoiceAgentId}
+        error={friendsInitError}
+        events={sessionEvents}
+        isConnectingVoice={isConnectingVoice}
+        isCouncilThinking={isCouncilThinking}
+        isEndingSession={isEndingSession}
+        isLoading={friendsInitLoading}
+        isSessionLoading={isSessionLoading}
+        isPromptRecording={isPromptRecording}
+        onAskQuestion={handleAskQuestion}
+        onCreateSession={handleCreateSession}
+        onEndSession={handleEndSession}
+        onEndLiveSession={handleEndLiveSession}
+        onPreviewVoice={handlePreviewVoice}
+        onQuestionChange={setFriendsQuestion}
+        onSelectSession={handleSelectSession}
+        onStartVoicePrompt={handleStartVoicePrompt}
+        onStopVoicePrompt={handleStopVoicePrompt}
+        prepById={prepById}
+        question={friendsQuestion}
+        selectedSession={selectedSession}
+        sessions={sessions}
+        statusMessage={friendsStatusMessage}
+        supportsVoicePromptInput={supportsVoicePromptInput}
+      />
     </div>
   );
 }
 
-function Header() {
+function CouncilHome({
+  activeVoiceAgentId,
+  error,
+  events,
+  isConnectingVoice,
+  isCouncilThinking,
+  isEndingSession,
+  isLoading,
+  isSessionLoading,
+  isPromptRecording,
+  onAskQuestion,
+  onCreateSession,
+  onEndSession,
+  onEndLiveSession,
+  onPreviewVoice,
+  onQuestionChange,
+  onSelectSession,
+  onStartVoicePrompt,
+  onStopVoicePrompt,
+  prepById,
+  question,
+  selectedSession,
+  sessions,
+  statusMessage,
+  supportsVoicePromptInput,
+}: CouncilHomeProps) {
+  const fallbackStatus = supportsVoicePromptInput
+    ? "Type a question or tap the mic to speak."
+    : "Type a question. Voice input is not supported in this browser.";
+
   return (
-    <header className="site-header">
-      <a className="logo" href="#demo" aria-label="D.R.A.M.A. home">
-        <span className="logo-ring">D</span>
-        <span>
-          D.R.A.M.A.
-          <small>Voice Council</small>
-        </span>
-      </a>
-      <nav aria-label="Primary navigation">
-        <a href="#demo">Demo</a>
-        <a href="#personas">Personas</a>
-        <a href="#architecture">Architecture</a>
-        <a href="#providers">Providers</a>
-      </nav>
-      <div className="header-actions">
-        <span className="system-ready">
-          <span aria-hidden="true"></span>
-          System Ready
-        </span>
-        <a className="launch-link" href="#demo">
-          Launch Council
-        </a>
-      </div>
-    </header>
+    <main className="council-shell" aria-labelledby="home-title">
+      <SessionSidebar
+        isLoading={isSessionLoading}
+        onCreateSession={onCreateSession}
+        onSelectSession={onSelectSession}
+        selectedSessionId={selectedSession?.id ?? null}
+        sessions={sessions}
+      />
+      <section className="council-card">
+        <header className="home-topbar">
+          <a className="home-brand" href="/" aria-label="D.R.A.M.A. home">
+            <span>D</span>
+            D.R.A.M.A.
+          </a>
+          <p>
+            {selectedSession?.status === "ended"
+              ? "Remembered"
+              : isCouncilThinking
+                ? "Council preparing"
+                : activeVoiceAgentId
+                  ? "Live voice"
+                  : "Voice Council"}
+          </p>
+        </header>
+
+        <div className="home-intro">
+          <p className="eyebrow">Ask the council</p>
+          <h1 id="home-title">Put one decision in the room.</h1>
+        </div>
+
+        <CouncilPhotoRow
+          activeVoiceAgentId={activeVoiceAgentId}
+          isConnectingVoice={isConnectingVoice}
+          onPreviewVoice={onPreviewVoice}
+          prepById={prepById}
+        />
+
+        <PromptComposer
+          isCouncilThinking={isCouncilThinking}
+          isLoading={isLoading || isSessionLoading || selectedSession?.status === "ended"}
+          isPromptRecording={isPromptRecording}
+          onAskQuestion={onAskQuestion}
+          onQuestionChange={onQuestionChange}
+          onStartVoicePrompt={onStartVoicePrompt}
+          onStopVoicePrompt={onStopVoicePrompt}
+          question={question}
+          supportsVoicePromptInput={supportsVoicePromptInput}
+        />
+
+        <div className={`status-note ${error ? "error" : ""}`} role={error ? "alert" : "status"}>
+          {error || statusMessage || fallbackStatus}
+        </div>
+
+        <SessionTranscript events={events} />
+
+        {activeVoiceAgentId ? (
+          <button
+            className="end-live-button"
+            type="button"
+            onClick={onEndLiveSession}
+          >
+            <PhoneOff size={17} aria-hidden="true" />
+            Reset live room
+          </button>
+        ) : null}
+
+        {selectedSession?.status === "active" ? (
+          <button
+            className="end-live-button"
+            type="button"
+            onClick={onEndSession}
+            disabled={isEndingSession || isSessionLoading}
+          >
+            <PhoneOff size={17} aria-hidden="true" />
+            {isEndingSession ? "Saving memory..." : "End Session"}
+          </button>
+        ) : null}
+      </section>
+    </main>
   );
 }
 
-function ModeCards({
-  chamber,
-  setChamber,
+function SessionSidebar({
+  isLoading,
+  onCreateSession,
+  onSelectSession,
+  selectedSessionId,
+  sessions,
 }: {
-  chamber: Chamber;
-  setChamber: (chamber: Chamber) => void;
+  isLoading: boolean;
+  onCreateSession: () => void;
+  onSelectSession: (sessionId: string) => void;
+  selectedSessionId: string | null;
+  sessions: DramaSession[];
 }) {
   return (
-    <div className="mode-card-row" aria-label="Chamber selector">
-      {(["inner", "group"] as Chamber[]).map((item) => {
-        const isActive = chamber === item;
-        const Icon = item === "inner" ? Brain : Users;
+    <aside className="session-sidebar" aria-label="Talk sessions">
+      <div className="session-sidebar-header">
+        <strong>Talks</strong>
+        <button type="button" onClick={onCreateSession} disabled={isLoading}>
+          New Talk
+        </button>
+      </div>
+      <div className="session-list">
+        {sessions.length === 0 ? (
+          <p>{isLoading ? "Loading sessions..." : "No talks yet."}</p>
+        ) : (
+          sessions.map((session) => (
+            <button
+              className={`session-list-item ${selectedSessionId === session.id ? "selected" : ""}`}
+              type="button"
+              key={session.id}
+              onClick={() => onSelectSession(session.id)}
+            >
+              <span>{session.title}</span>
+              <small>
+                {session.status === "active" ? "Active" : "Remembered"} ·{" "}
+                {new Date(session.updatedAt).toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                })}
+              </small>
+            </button>
+          ))
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function SessionTranscript({ events }: { events: SessionEvent[] }) {
+  if (events.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="session-transcript" aria-label="Shared session context">
+      <div className="session-transcript-header">
+        <strong>Shared room context</strong>
+        <small>{events.length} saved turn{events.length === 1 ? "" : "s"}</small>
+      </div>
+      <div className="session-transcript-list">
+        {events.slice(-5).map((event) => (
+          <article className={`transcript-event ${event.speakerType}`} key={event.id}>
+            <strong>{event.agentId ?? event.speakerType}</strong>
+            <p>{event.content}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CouncilPhotoRow({
+  activeVoiceAgentId,
+  isConnectingVoice,
+  onPreviewVoice,
+  prepById,
+}: {
+  activeVoiceAgentId: string | null;
+  isConnectingVoice: boolean;
+  onPreviewVoice: (agentId: string) => void;
+  prepById: Record<string, FriendPrepState>;
+}) {
+  return (
+    <section className="council-row" aria-label="Council members">
+      {FRIENDS_MODE_AGENTS.map((agent) => {
+        const prepState = prepById[agent.id] ?? "idle";
+        const isReady = prepState === "ready";
+        const isActive = activeVoiceAgentId === agent.id;
+        const statusLabel = isActive ? "live" : prepState;
+
         return (
           <button
-            className={`mode-tile ${isActive ? "active" : ""}`}
+            className={`member-photo-card is-${prepState} ${isActive ? "is-live" : ""}`}
             type="button"
-            key={item}
-            onClick={() => setChamber(item)}
-            aria-pressed={isActive}
+            key={agent.id}
+            disabled={!isReady || isConnectingVoice}
+            onClick={() => onPreviewVoice(agent.id)}
+            aria-label={`${agent.name}, ${agent.role}, ${statusLabel}`}
           >
-            <Icon size={30} aria-hidden="true" />
-            <strong>{item === "inner" ? "Inner D.R.A.M.A." : "Group D.R.A.M.A."}</strong>
-            <span>{item === "inner" ? "Your contradictions." : "Invite others. Argue together."}</span>
+            <span className="portrait-wrap">
+              <img src={councilPortraits[agent.id]} alt="" aria-hidden="true" />
+              <span className="status-orbit" aria-hidden="true"></span>
+            </span>
+            <span className="member-copy">
+              <strong>{agent.name}</strong>
+              <small>{agent.role}</small>
+            </span>
+            <span className="member-state">{statusLabel}</span>
           </button>
         );
       })}
-    </div>
-  );
-}
-
-function LiveRoom({
-  activeTurn,
-  chamber,
-  isPlaying,
-  personas,
-  selectedPersonaId,
-  setIsPlaying,
-  setSelectedPersonaId,
-  setTurnIndex,
-  tier,
-}: {
-  activeTurn: TranscriptTurn;
-  chamber: Chamber;
-  isPlaying: boolean;
-  personas: Persona[];
-  selectedPersonaId: string;
-  setIsPlaying: (value: boolean) => void;
-  setSelectedPersonaId: (id: string) => void;
-  setTurnIndex: (index: number) => void;
-  tier: Tier;
-}) {
-  return (
-    <section className="live-room" aria-label="Live council room">
-      <div className="room-toolbar">
-        <div>
-          <span className="toolbar-title">Live Council Room</span>
-          <span className="recording-state">Live</span>
-          <span className="timer">00:02:47</span>
-        </div>
-        <div className="toolbar-actions">
-          <button type="button">
-            <PanelRight size={15} aria-hidden="true" />
-            Full Screen
-          </button>
-          <button className="danger" type="button" onClick={() => setIsPlaying(false)}>
-            End Session
-            <ChevronRight size={15} aria-hidden="true" />
-          </button>
-        </div>
-      </div>
-
-      <div className="council-stage">
-        <img src="/assets/council-room.png" alt="Dramatic AI council around a circular decision table" />
-        <div className="stage-gradient" aria-hidden="true"></div>
-        <div className="speaker-stack" aria-label="Persona speaker controls">
-          {personas.slice(0, 5).map((persona, index) => {
-            const isActive = activeTurn.speaker === persona.name || selectedPersonaId === persona.id;
-            return (
-              <button
-                className={`speaker-chip speaker-${index + 1} ${isActive ? "active" : ""}`}
-                type="button"
-                key={persona.id}
-                onClick={() => setSelectedPersonaId(persona.id)}
-                style={{ "--accent": persona.color } as React.CSSProperties}
-              >
-                <span>{persona.name}</span>
-                <small>{persona.role}</small>
-              </button>
-            );
-          })}
-        </div>
-        <div className="user-seat">
-          <span>You</span>
-          <small>Decision maker</small>
-        </div>
-      </div>
-
-      <div className="wave-console">
-        <div className="waveform" aria-hidden="true">
-          {Array.from({ length: 56 }, (_, index) => (
-            <i
-              key={index}
-              style={
-                {
-                  "--bar": `${16 + ((index * 17) % 52)}px`,
-                  "--delay": `${(index % 9) * 70}ms`,
-                } as React.CSSProperties
-              }
-            />
-          ))}
-        </div>
-        <p>
-          <span style={{ color: sentimentColor[activeTurn.sentiment] }}>{activeTurn.speaker}</span> is speaking...
-        </p>
-        <div className="room-controls">
-          <button type="button" aria-label="Mute all">
-            <Mic size={18} aria-hidden="true" />
-            <span>Mute All</span>
-          </button>
-          <button className="round-control" type="button" aria-label={isPlaying ? "Pause replay" : "Play replay"} onClick={() => setIsPlaying(!isPlaying)}>
-            {isPlaying ? <Pause size={24} aria-hidden="true" /> : <Play size={24} aria-hidden="true" />}
-          </button>
-          <button className="call-control" type="button" aria-label="End call" onClick={() => setIsPlaying(false)}>
-            <PhoneOff size={24} aria-hidden="true" />
-          </button>
-          <button className="round-control" type="button" aria-label="Restart replay" onClick={() => setTurnIndex(0)}>
-            <RotateCcw size={21} aria-hidden="true" />
-          </button>
-          <button type="button" aria-label="Open settings">
-            <Settings size={18} aria-hidden="true" />
-            <span>Settings</span>
-          </button>
-        </div>
-      </div>
-
-      <div className="provider-bar" id="providers">
-        <span>Providers</span>
-        <strong>{tier === "pro" ? "Pro orchestration" : "Fast realtime"}</strong>
-        <span>{chamberCopy[chamber].title}</span>
-        <span>Latency 128ms</span>
-        <span>Region us-east-1</span>
-      </div>
     </section>
   );
 }
 
-function TranscriptPanel({ turns }: { turns: TranscriptTurn[] }) {
+function PromptComposer({
+  isCouncilThinking,
+  isLoading,
+  isPromptRecording,
+  onAskQuestion,
+  onQuestionChange,
+  onStartVoicePrompt,
+  onStopVoicePrompt,
+  question,
+  supportsVoicePromptInput,
+}: {
+  isCouncilThinking: boolean;
+  isLoading: boolean;
+  isPromptRecording: boolean;
+  onAskQuestion: () => void;
+  onQuestionChange: (question: string) => void;
+  onStartVoicePrompt: () => void;
+  onStopVoicePrompt: () => void;
+  question: string;
+  supportsVoicePromptInput: boolean;
+}) {
+  const isSubmitDisabled = !question.trim() || isCouncilThinking || isLoading;
+
   return (
-    <section className="panel transcript-panel" aria-labelledby="transcript-title">
-      <div className="panel-heading">
-        <div>
-          <h2 id="transcript-title">Transcript</h2>
-          <span>Live speaker markers</span>
-        </div>
-        <button type="button" aria-label="Download transcript">
-          <Download size={16} aria-hidden="true" />
+    <section className="prompt-composer" aria-label="Question composer">
+      <textarea
+        value={question}
+        onChange={(event) => onQuestionChange(event.target.value)}
+        placeholder="Should I launch this now, or tighten the onboarding first?"
+        rows={5}
+      />
+      <div className="composer-actions">
+        <button
+          className={`mic-button ${isPromptRecording ? "recording" : ""}`}
+          type="button"
+          disabled={!supportsVoicePromptInput}
+          onClick={isPromptRecording ? onStopVoicePrompt : onStartVoicePrompt}
+        >
+          {isPromptRecording ? <AudioLines size={19} aria-hidden="true" /> : <Mic size={19} aria-hidden="true" />}
+          {isPromptRecording ? "Listening" : "Mic"}
+        </button>
+        <button
+          className="ask-button"
+          type="button"
+          disabled={isSubmitDisabled}
+          onClick={onAskQuestion}
+        >
+          {isCouncilThinking || isLoading ? (
+            <Loader2 className="spin" size={18} aria-hidden="true" />
+          ) : (
+            <Send size={18} aria-hidden="true" />
+          )}
+          {isCouncilThinking || isLoading ? "Thinking" : "Ask Council"}
         </button>
       </div>
-      <div className="transcript-list">
-        {turns.map((turn) => (
-          <article className="turn" key={`${turn.speaker}-${turn.time}`} style={{ "--accent": sentimentColor[turn.sentiment] } as React.CSSProperties}>
-            <div className="avatar" aria-hidden="true">
-              {turn.speaker
-                .split(" ")
-                .filter(Boolean)
-                .slice(-1)[0]
-                .charAt(0)}
-            </div>
-            <div>
-              <div className="turn-meta">
-                <strong>{turn.speaker}</strong>
-                <span>{turn.time}</span>
-              </div>
-              <p>{turn.text}</p>
-            </div>
-          </article>
-        ))}
-      </div>
-      <div className="live-note">
-        <span aria-hidden="true"></span>
-        Live auto-scroll on
-      </div>
-    </section>
-  );
-}
-
-function VerdictPanel({ chamber, tier }: { chamber: Chamber; tier: Tier }) {
-  const verdict = tier === "pro" ? "Proceed with Receipts" : chamber === "group" ? "Make it weirder" : "Sleep, then build";
-  return (
-    <section className="panel verdict-panel" aria-labelledby="verdict-title">
-      <div className="panel-heading">
-        <div>
-          <h2 id="verdict-title">Verdict</h2>
-          <span>{tier === "pro" ? "Case-backed decision" : "Fast council read"}</span>
-        </div>
-        <Shield size={18} aria-hidden="true" />
-      </div>
-      <div className="verdict-crest" aria-hidden="true">
-        <BookOpen size={38} />
-      </div>
-      <h3>{verdict}</h3>
-      <p>
-        Confidence: <strong>{tier === "pro" ? "72%" : "64%"}</strong>
-      </p>
-      <ul>
-        <li>Validate assumptions before scaling.</li>
-        <li>Keep the first voice flow under ninety seconds.</li>
-        <li>Use replay fallback when the API key is not available.</li>
-      </ul>
-      <button type="button">
-        See Full Rationale
-        <ChevronRight size={17} aria-hidden="true" />
-      </button>
-    </section>
-  );
-}
-
-function SummaryPanel({ activeTurn, transcript }: { activeTurn: TranscriptTurn; transcript: TranscriptTurn[] }) {
-  return (
-    <section className="panel summary-panel" aria-labelledby="summary-title">
-      <div className="panel-heading">
-        <div>
-          <h2 id="summary-title">Council Summary</h2>
-          <span>Session analytics</span>
-        </div>
-        <Activity size={18} aria-hidden="true" />
-      </div>
-      <div className="metric-grid">
-        <Metric label="Total turns" value={String(transcript.length + 13)} />
-        <Metric label="Dominant persona" value={activeTurn.speaker} />
-        <Metric label="Avg speaking time" value="18.4s" />
-        <Metric label="Interruption rate" value="27%" />
-      </div>
-      <div className="sentiment-bars" aria-label="Sentiment mix">
-        <span style={{ width: "42%", background: "#ef4444" }}></span>
-        <span style={{ width: "33%", background: "#f59e0b" }}></span>
-        <span style={{ width: "25%", background: "#14b8a6" }}></span>
-      </div>
-      <div className="legend">
-        <span><i style={{ background: "#ef4444" }}></i>Skeptical 42%</span>
-        <span><i style={{ background: "#f59e0b" }}></i>Cautious 33%</span>
-        <span><i style={{ background: "#14b8a6" }}></i>Positive 25%</span>
-      </div>
-    </section>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function PersonaSetup({
-  enabledPersonas,
-  personas,
-  personaValues,
-  selectedPersona,
-  setAddedPersona,
-  setEnabledPersonas,
-  setPersonaValues,
-  setSelectedPersonaId,
-}: {
-  enabledPersonas: Record<string, boolean>;
-  personas: Persona[];
-  personaValues: Record<string, number>;
-  selectedPersona: Persona;
-  setAddedPersona: (value: boolean) => void;
-  setEnabledPersonas: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
-  setPersonaValues: React.Dispatch<React.SetStateAction<Record<string, number>>>;
-  setSelectedPersonaId: (id: string) => void;
-}) {
-  return (
-    <section className="work-panel persona-setup" aria-labelledby="persona-title">
-      <PanelTitle index="1" title="Your Personas" aside="Edit bias" />
-      <div className="persona-list">
-        {personas.map((persona) => (
-          <article
-            className={`persona-editor ${selectedPersona.id === persona.id ? "selected" : ""}`}
-            key={persona.id}
-            style={{ "--accent": persona.color } as React.CSSProperties}
-          >
-            <button className="persona-main" type="button" onClick={() => setSelectedPersonaId(persona.id)}>
-              <span className="persona-face" aria-hidden="true">
-                {persona.name.charAt(4) || persona.name.charAt(0)}
-              </span>
-              <span>
-                <strong>{persona.name}</strong>
-                <small>Bias: {persona.bias}</small>
-              </span>
-            </button>
-            <label className="bias-slider">
-              <span>{personaValues[persona.id] ?? persona.caution}%</span>
-              <input
-                aria-label={`${persona.name} caution`}
-                max="100"
-                min="0"
-                type="range"
-                value={personaValues[persona.id] ?? persona.caution}
-                onChange={(event) =>
-                  setPersonaValues((current) => ({
-                    ...current,
-                    [persona.id]: Number(event.target.value),
-                  }))
-                }
-              />
-            </label>
-            <button
-              className={`toggle ${enabledPersonas[persona.id] ? "on" : ""}`}
-              type="button"
-              aria-pressed={enabledPersonas[persona.id] ?? true}
-              aria-label={`Toggle ${persona.name}`}
-              onClick={() =>
-                setEnabledPersonas((current) => ({
-                  ...current,
-                  [persona.id]: !(current[persona.id] ?? true),
-                }))
-              }
-            >
-              <span></span>
-            </button>
-          </article>
-        ))}
-      </div>
-      <div className="backstory-box">
-        <div>
-          <strong>Backstory / Context</strong>
-          <button type="button">Clear</button>
-        </div>
-        <p>{selectedPersona.line}</p>
-        <small>Blind spot: {selectedPersona.blindSpot}</small>
-      </div>
-      <button className="add-persona" type="button" onClick={() => setAddedPersona(true)}>
-        <Plus size={16} aria-hidden="true" />
-        Add Persona
-      </button>
-    </section>
-  );
-}
-
-function ModeTierPanel({
-  chamber,
-  setChamber,
-  setTier,
-  setTurnLength,
-  tier,
-  turnLength,
-}: {
-  chamber: Chamber;
-  setChamber: (chamber: Chamber) => void;
-  setTier: (tier: Tier) => void;
-  setTurnLength: (value: string) => void;
-  tier: Tier;
-  turnLength: string;
-}) {
-  return (
-    <section className="work-panel mode-tier" aria-labelledby="mode-tier-title">
-      <PanelTitle index="2" title="Mode & Tier" aside={chamberCopy[chamber].title} />
-      <div className="segmented">
-        {(["inner", "group"] as Chamber[]).map((item) => (
-          <button className={chamber === item ? "active" : ""} type="button" key={item} onClick={() => setChamber(item)}>
-            {item === "inner" ? "Inner" : "Group"}
-          </button>
-        ))}
-      </div>
-      <div className="segmented tier-tabs">
-        {(["fast", "pro"] as Tier[]).map((item) => (
-          <button className={tier === item ? "active" : ""} type="button" key={item} onClick={() => setTier(item)}>
-            {item === "fast" ? "Fast" : "Pro"}
-          </button>
-        ))}
-      </div>
-      <article className="tier-card">
-        <div className="tier-heading">
-          <Gauge size={20} aria-hidden="true" />
-          <strong>{tier === "fast" ? "Fast Mode" : "Pro Mode"}</strong>
-        </div>
-        <p>{tier === "fast" ? "Lower latency, shorter turns, perfect for a live judging demo." : "Deeper reasoning with receipts, sources, and a case-file handoff."}</p>
-        <ul>
-          {(tier === "fast"
-            ? ["Realtime voice", "No external research", "Short-turn council", "Best for stage demo"]
-            : ["Live research receipts", "Case file and sources", "Higher accuracy path", "Async advisor-ready"]
-          ).map((item) => (
-            <li key={item}>
-              <Check size={15} aria-hidden="true" />
-              {item}
-            </li>
-          ))}
-        </ul>
-      </article>
-      <div className="turn-length" aria-label="Turn length">
-        {["Short", "Medium", "Long"].map((item) => (
-          <button className={turnLength === item ? "active" : ""} type="button" key={item} onClick={() => setTurnLength(item)}>
-            {item}
-          </button>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ResearchPanel({ tier }: { tier: Tier }) {
-  const [tab, setTab] = useState<"research" | "case">("research");
-
-  return (
-    <section className="work-panel research-panel" aria-labelledby="research-title">
-      <PanelTitle index="3" title="Pro Research & Case File" aside={tier === "pro" ? "Armed" : "Standby"} />
-      <div className="tab-strip">
-        <button className={tab === "research" ? "active" : ""} type="button" onClick={() => setTab("research")}>
-          Research
-        </button>
-        <button className={tab === "case" ? "active" : ""} type="button" onClick={() => setTab("case")}>
-          Case File
-        </button>
-      </div>
-      {tab === "research" ? (
-        <div className="receipt-list">
-          {receipts.map((receipt) => (
-            <article key={receipt.title}>
-              <div className="receipt-icon" aria-hidden="true">
-                <FileText size={16} />
-              </div>
-              <div>
-                <strong>{receipt.title}</strong>
-                <span>
-                  {receipt.source} · {receipt.age}
-                </span>
-                <p>{receipt.summary}</p>
-              </div>
-              <button type="button" aria-label={`Open ${receipt.title}`}>
-                <ExternalLink size={16} aria-hidden="true" />
-              </button>
-            </article>
-          ))}
-        </div>
-      ) : (
-        <div className="case-file">
-          <h3>Case File Summary</h3>
-          <p>
-            D.R.A.M.A. should launch with Fast voice first, then use Pro mode to turn the same debate into a sourced
-            decision record.
-          </p>
-          <div>
-            <span>Evidence quality</span>
-            <strong>Medium-high</strong>
-          </div>
-          <div>
-            <span>Primary risk</span>
-            <strong>Realtime latency</strong>
-          </div>
-          <div>
-            <span>Next action</span>
-            <strong>Ship replay-safe MVP</strong>
-          </div>
-        </div>
-      )}
-      <button className="export-case" type="button">
-        <Download size={17} aria-hidden="true" />
-        Export Case File
-      </button>
-    </section>
-  );
-}
-
-function ArchitecturePanel() {
-  return (
-    <section className="work-panel architecture-panel" aria-labelledby="architecture-title">
-      <PanelTitle index="4" title="Architecture & Provider Readiness" aside="MVP path" />
-      <div className="architecture-flow">
-        <div className="node user-node">
-          <Users size={24} aria-hidden="true" />
-          <span>You / users</span>
-        </div>
-        <Connector label="Speak" />
-        <div className="node app-node">
-          <Radio size={25} aria-hidden="true" />
-          <strong>D.R.A.M.A.</strong>
-          <span>Frontend</span>
-        </div>
-        <Connector label="WebRTC" />
-        <div className="node stack-node">
-          <strong>Realtime Orchestrator</strong>
-          {architecture.slice(1, 5).map((item) => (
-            <span key={item}>{item}</span>
-          ))}
-        </div>
-        <Connector label="Events" />
-        <div className="provider-stack">
-          {providers.map((provider) => (
-            <div className={`provider-pill ${provider.tone}`} key={provider.name}>
-              <span>{provider.name}</span>
-              <strong>{provider.status}</strong>
-              <small>{provider.metric}</small>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function Connector({ label }: { label: string }) {
-  return (
-    <div className="connector" aria-hidden="true">
-      <span>{label}</span>
-    </div>
-  );
-}
-
-function ChecklistPanel({ checkedCount }: { checkedCount: number }) {
-  return (
-    <section className="work-panel checklist-panel" aria-labelledby="checklist-title">
-      <PanelTitle index="5" title="Build / Demo Checklist" aside={`${checkedCount} / ${checklist.length}`} />
-      <div className="checklist">
-        {checklist.map((item, index) => (
-          <label key={item}>
-            <input type="checkbox" defaultChecked={index < checkedCount} />
-            <span>{item}</span>
-          </label>
-        ))}
-      </div>
-      <div className="progress-track" aria-label={`${checkedCount} of ${checklist.length} complete`}>
-        <span style={{ width: `${(checkedCount / checklist.length) * 100}%` }}></span>
-      </div>
-    </section>
-  );
-}
-
-function PanelTitle({ aside, index, title }: { aside: string; index: string; title: string }) {
-  return (
-    <div className="work-title">
-      <h2>
-        <span>{index}.</span> {title}
-      </h2>
-      <small>{aside}</small>
-    </div>
-  );
-}
-
-function CallToAction({ setIsPlaying }: { setIsPlaying: (value: boolean) => void }) {
-  return (
-    <section className="cta-band" aria-labelledby="cta-title">
-      <div>
-        <h2 id="cta-title">Ready to hear your inner morons?</h2>
-        <p>Join the council. Get roasted. Make better decisions.</p>
-      </div>
-      <button className="primary-action" type="button" onClick={() => setIsPlaying(true)}>
-        Launch a Live Council
-        <AudioLines size={18} aria-hidden="true" />
-      </button>
     </section>
   );
 }

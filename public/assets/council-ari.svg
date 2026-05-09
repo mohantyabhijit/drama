@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="Ari portrait">
+  <defs>
+    <linearGradient id="bg" x1="17" y1="10" x2="142" y2="151" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#b5a7d8"/>
+      <stop offset=".56" stop-color="#6c6f9d"/>
+      <stop offset="1" stop-color="#2f3449"/>
+    </linearGradient>
+    <radialGradient id="light" cx="47" cy="38" r="86" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff9f0" stop-opacity=".9"/>
+      <stop offset=".66" stop-color="#fff9f0" stop-opacity=".08"/>
+      <stop offset="1" stop-color="#fff9f0" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="160" height="160" fill="url(#bg)"/>
+  <circle cx="50" cy="34" r="78" fill="url(#light)"/>
+  <path fill="#201f25" d="M38 76c0-35 17-55 44-55 28 0 45 20 45 55 0 26-9 47-18 60H55C45 122 38 101 38 76Z"/>
+  <path fill="#c98968" d="M51 76c0-23 12-39 31-39s31 16 31 39c0 29-12 48-31 48S51 105 51 76Z"/>
+  <path fill="#aa644f" d="M78 78h8l-4 18-8-1 4-17Z" opacity=".7"/>
+  <path fill="#1a1718" d="M59 75c7-6 16-6 23 0-8 3-15 3-23 0Zm29 0c7-6 16-6 22 0-7 3-14 3-22 0Z"/>
+  <path fill="#55302f" d="M71 108c8 3 16 3 23 0-4 7-17 7-23 0Z"/>
+  <path fill="#24283b" d="M23 137c15-19 35-29 59-29 25 0 44 10 57 29v23H23v-23Z"/>
+  <path fill="#ece6dd" d="M55 125c15 11 40 11 54 0l-8 35H63l-8-35Z"/>
+  <path fill="#29262b" d="M41 62c12-20 25-29 41-29 18 0 31 10 43 31-16-8-30-12-43-12-14 0-28 3-41 10Z"/>
+</svg>
