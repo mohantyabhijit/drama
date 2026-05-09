@@ -694,14 +694,16 @@ function CouncilHome({
 
         <CouncilPhotoRow
           activeVoiceAgentId={activeVoiceAgentId}
+          isArchived={selectedSession?.status === "ended"}
           isConnectingVoice={isConnectingVoice}
           onPreviewVoice={onPreviewVoice}
           prepById={prepById}
         />
 
         <PromptComposer
+          isArchived={selectedSession?.status === "ended"}
           isCouncilThinking={isCouncilThinking}
-          isLoading={isLoading || isSessionLoading || selectedSession?.status === "ended"}
+          isLoading={isLoading || isSessionLoading}
           isPromptRecording={isPromptRecording}
           onAskQuestion={onAskQuestion}
           onQuestionChange={onQuestionChange}
@@ -862,11 +864,13 @@ function SessionTranscript({
 
 function CouncilPhotoRow({
   activeVoiceAgentId,
+  isArchived,
   isConnectingVoice,
   onPreviewVoice,
   prepById,
 }: {
   activeVoiceAgentId: string | null;
+  isArchived: boolean;
   isConnectingVoice: boolean;
   onPreviewVoice: (agentId: string) => void;
   prepById: Record<string, FriendPrepState>;
@@ -884,7 +888,7 @@ function CouncilPhotoRow({
             className={`member-photo-card is-${prepState} ${isActive ? "is-live" : ""}`}
             type="button"
             key={agent.id}
-            disabled={!isReady || isConnectingVoice}
+            disabled={isArchived || !isReady || isConnectingVoice}
             onClick={() => onPreviewVoice(agent.id)}
             aria-label={`${agent.name}, ${agent.role}, ${statusLabel}`}
           >
@@ -905,6 +909,7 @@ function CouncilPhotoRow({
 }
 
 function PromptComposer({
+  isArchived,
   isCouncilThinking,
   isLoading,
   isPromptRecording,
@@ -915,6 +920,7 @@ function PromptComposer({
   question,
   supportsVoicePromptInput,
 }: {
+  isArchived: boolean;
   isCouncilThinking: boolean;
   isLoading: boolean;
   isPromptRecording: boolean;
@@ -925,7 +931,8 @@ function PromptComposer({
   question: string;
   supportsVoicePromptInput: boolean;
 }) {
-  const isSubmitDisabled = !question.trim() || isCouncilThinking || isLoading;
+  const isSubmitDisabled = isArchived || !question.trim() || isCouncilThinking || isLoading;
+  const actionLabel = isArchived ? "Session Ended" : isCouncilThinking || isLoading ? "Thinking" : "Ask Council";
 
   return (
     <section className="prompt-composer" aria-label="Question composer">
@@ -934,12 +941,13 @@ function PromptComposer({
         onChange={(event) => onQuestionChange(event.target.value)}
         placeholder="Should I launch this now, or tighten the onboarding first?"
         rows={5}
+        disabled={isArchived}
       />
       <div className="composer-actions">
         <button
           className={`mic-button ${isPromptRecording ? "recording" : ""}`}
           type="button"
-          disabled={!supportsVoicePromptInput}
+          disabled={isArchived || !supportsVoicePromptInput}
           onClick={isPromptRecording ? onStopVoicePrompt : onStartVoicePrompt}
         >
           {isPromptRecording ? <AudioLines size={19} aria-hidden="true" /> : <Mic size={19} aria-hidden="true" />}
@@ -956,7 +964,7 @@ function PromptComposer({
           ) : (
             <Send size={18} aria-hidden="true" />
           )}
-          {isCouncilThinking || isLoading ? "Thinking" : "Ask Council"}
+          {actionLabel}
         </button>
       </div>
     </section>
