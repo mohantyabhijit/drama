@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Council Home Simplification Design</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f1e8;
+        --paper: #fffdf8;
+        --ink: #171512;
+        --muted: #6f685e;
+        --line: #ddd3c5;
+        --accent: #1a1815;
+        --accent-soft: #ece4d8;
+        --photo: #f3ede3;
+        --shadow: 0 24px 60px rgba(29, 20, 10, 0.08);
+        font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at top, rgba(255, 255, 255, 0.65), transparent 35%),
+          var(--bg);
+        color: var(--ink);
+      }
+
+      main {
+        width: min(920px, calc(100% - 32px));
+        margin: 40px auto 64px;
+      }
+
+      .doc {
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .hero {
+        padding: 40px 40px 28px;
+        border-bottom: 1px solid var(--line);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 253, 248, 0.92)),
+          var(--paper);
+      }
+
+      .eyebrow {
+        margin: 0 0 12px;
+        color: var(--muted);
+        font-size: 12px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: clamp(2rem, 4vw, 3.5rem);
+        line-height: 0.96;
+      }
+
+      .intro {
+        margin: 0;
+        max-width: 62ch;
+        color: var(--muted);
+        font-size: 1.05rem;
+        line-height: 1.65;
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 20px;
+      }
+
+      .meta span {
+        padding: 8px 12px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.7);
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .content {
+        display: grid;
+        gap: 28px;
+        padding: 32px 40px 40px;
+      }
+
+      section {
+        display: grid;
+        gap: 12px;
+      }
+
+      h2 {
+        margin: 0;
+        font-size: 1.4rem;
+      }
+
+      h3 {
+        margin: 8px 0 0;
+        font-size: 1.05rem;
+      }
+
+      p,
+      li {
+        color: var(--muted);
+        font-size: 1rem;
+        line-height: 1.7;
+      }
+
+      p,
+      ul,
+      ol {
+        margin: 0;
+      }
+
+      ul,
+      ol {
+        padding-left: 20px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .card {
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: #fffaf2;
+      }
+
+      .preview {
+        padding: 22px;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        background: linear-gradient(180deg, #fcfaf5, #f2eadf);
+      }
+
+      .phone {
+        max-width: 360px;
+        margin: 0 auto;
+        padding: 18px;
+        border: 1px solid #d6cbbb;
+        border-radius: 28px;
+        background: #fcfbf6;
+      }
+
+      .photos {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+
+      .photo {
+        width: 54px;
+        height: 54px;
+        border: 1px solid #d8cebf;
+        border-radius: 50%;
+        background:
+          radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.9), transparent 26%),
+          linear-gradient(145deg, #f4ede2, #e2d8ca);
+      }
+
+      .composer {
+        display: grid;
+        gap: 12px;
+        padding: 16px;
+        border: 1px solid #ddd3c5;
+        border-radius: 18px;
+        background: #fffdf8;
+      }
+
+      .box {
+        min-height: 120px;
+        padding: 14px;
+        border: 1px solid #ddd3c5;
+        border-radius: 16px;
+        background: white;
+        color: var(--muted);
+      }
+
+      .row {
+        display: flex;
+        gap: 10px;
+      }
+
+      .mic,
+      .ask {
+        min-height: 44px;
+        border-radius: 14px;
+        display: grid;
+        place-items: center;
+        font-size: 0.95rem;
+      }
+
+      .mic {
+        width: 54px;
+        border: 1px solid #ddd3c5;
+        background: var(--accent-soft);
+        color: var(--ink);
+      }
+
+      .ask {
+        flex: 1;
+        background: var(--accent);
+        color: white;
+      }
+
+      code {
+        padding: 0.1em 0.35em;
+        border-radius: 6px;
+        background: #f1eadf;
+        font-size: 0.92em;
+      }
+
+      @media (max-width: 760px) {
+        main {
+          width: min(100%, calc(100% - 20px));
+          margin: 16px auto 32px;
+        }
+
+        .hero,
+        .content {
+          padding-left: 18px;
+          padding-right: 18px;
+        }
+
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <article class="doc">
+        <header class="hero">
+          <p class="eyebrow">D.R.A.M.A. Design Spec</p>
+          <h1>Council Home Simplification</h1>
+          <p class="intro">
+            Replace the current landing-page-style shell with a prompt-first home screen: one shared
+            box for typing or speaking, one <code>Ask Council</code> action, and a visible row of
+            council member photos that become directly talkable once the council is ready.
+          </p>
+          <div class="meta">
+            <span>Date: 2026-05-09</span>
+            <span>Scope: Home screen redesign</span>
+            <span>Mode: In-place state transitions</span>
+          </div>
+        </header>
+
+        <div class="content">
+          <section>
+            <h2>Goal</h2>
+            <ul>
+              <li>Open directly into a focused product surface instead of a demo or marketing page.</li>
+              <li>Support typing and voice-to-text through one shared prompt box.</li>
+              <li>Keep the council visually present with a compact row of member photos.</li>
+              <li>Let the user tap a specific council member photo after submit to talk live with that member.</li>
+            </ul>
+          </section>
+
+          <section>
+            <h2>Non-Goals</h2>
+            <ul>
+              <li>Changing backend Friends Mode initialization behavior.</li>
+              <li>Redesigning the downstream live voice runtime.</li>
+              <li>Adding onboarding, settings, or extra marketing sections.</li>
+              <li>Keeping the current hero, architecture, transcript, or workspace panels in the first-view experience.</li>
+            </ul>
+          </section>
+
+          <section>
+            <h2>Experience Summary</h2>
+            <p>
+              The app opens to one screen. At the top is a small visible row of five council member
+              photos. Beneath that is one prompt composer with a mic control and one primary
+              <code>Ask Council</code> button. After submit, the same screen transforms in place from
+              idle to thinking to ready. Once ready, each member photo can be tapped to start a live
+              conversation with that specific member.
+            </p>
+          </section>
+
+          <section>
+            <h2>Visual Direction</h2>
+            <div class="grid">
+              <div class="card">
+                <h3>Chosen Tone</h3>
+                <p>
+                  Use the earlier <strong>B</strong> structure with the restraint of <strong>C</strong>:
+                  council presence up top, almost no intro copy, and no landing-page energy.
+                </p>
+              </div>
+              <div class="card">
+                <h3>Personality Source</h3>
+                <p>
+                  Keep personality in the photos and the live-state behavior, not in marketing copy,
+                  loud gradients, or oversized hero composition.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2>Screen Preview</h2>
+            <div class="preview">
+              <div class="phone">
+                <div class="photos">
+                  <div class="photo"></div>
+                  <div class="photo"></div>
+                  <div class="photo"></div>
+                  <div class="photo"></div>
+                  <div class="photo"></div>
+                </div>
+                <div class="composer">
+                  <div class="box">Should I launch this now, or tighten the onboarding first?</div>
+                  <div class="row">
+                    <div class="mic">Mic</div>
+                    <div class="ask">Ask Council</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2>Primary Flow</h2>
+            <ol>
+              <li>User lands on the home screen and sees the council photo row, one prompt box, and one primary button.</li>
+              <li>User types or taps the mic to speak. Voice transcription populates the same prompt box.</li>
+              <li>User presses <code>Ask Council</code>.</li>
+              <li>The screen stays in place and the council enters a visible thinking state.</li>
+              <li>When ready, the photos become the main interaction targets.</li>
+              <li>User taps a member photo and starts talking directly with that member.</li>
+            </ol>
+          </section>
+
+          <section>
+            <h2>Component Structure</h2>
+            <div class="grid">
+              <div class="card">
+                <h3>Keep</h3>
+                <ul>
+                  <li>Existing Friends Mode runtime logic in <code>src/App.tsx</code>.</li>
+                  <li>Current browser speech recognition flow.</li>
+                  <li>Current live voice preview startup and cleanup behavior.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Refactor Toward</h3>
+                <ul>
+                  <li><code>CouncilHome</code></li>
+                  <li><code>CouncilPhotoRow</code></li>
+                  <li><code>PromptComposer</code></li>
+                  <li>Smaller focused state rendering instead of one large landing page shell</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2>Interaction Rules</h2>
+            <div class="grid">
+              <div class="card">
+                <h3>Voice Input</h3>
+                <ul>
+                  <li>The mic belongs to the prompt composer, not a separate screen.</li>
+                  <li>Speaking appends recognized text into the same prompt box.</li>
+                  <li>If unsupported, typed input still fully works.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Council Photos</h3>
+                <ul>
+                  <li>Use photos, not initials or generic badges.</li>
+                  <li>Show all five before submit.</li>
+                  <li>Only ready members are tappable.</li>
+                  <li>The active member shows a clear live state.</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2>State Model</h2>
+            <ul>
+              <li><code>idle</code>: no submitted question yet</li>
+              <li><code>listening</code>: browser speech recognition is active</li>
+              <li><code>thinking</code>: question submitted, council preparing</li>
+              <li><code>ready</code>: members can be tapped</li>
+              <li><code>live</code>: one member is currently active for voice conversation</li>
+            </ul>
+          </section>
+
+          <section>
+            <h2>Error Handling</h2>
+            <ul>
+              <li>Keep errors inline and short.</li>
+              <li>Preserve the typed prompt on failures.</li>
+              <li>Cover empty prompt, speech recognition failure, initialization failure, and preview startup failure.</li>
+            </ul>
+          </section>
+
+          <section>
+            <h2>Testing Focus</h2>
+            <ul>
+              <li>Typed and spoken input both feed the same prompt field.</li>
+              <li><code>Ask Council</code> transitions cleanly through thinking and ready states.</li>
+              <li>Member photos are visible before submit and tappable after ready.</li>
+              <li>Tapping a ready member starts that member's live session.</li>
+              <li>The old landing-page sections are gone from the first-view experience.</li>
+            </ul>
+          </section>
+
+          <section>
+            <h2>Recommendation</h2>
+            <p>
+              Implement this as a true simplification refactor, not a new layer on top of the current
+              page. The product already has the right behavior primitives. The work is mainly to strip
+              away the landing-page framing, restructure the UI into a single calm screen, and replace
+              abstract avatar treatments with real council member photos.
+            </p>
+          </section>
+        </div>
+      </article>
+    </main>
+  </body>
+</html>
