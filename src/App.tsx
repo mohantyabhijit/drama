@@ -402,7 +402,7 @@ function App() {
       blueprint
         ? `You are ${blueprint.name}, the ${blueprint.role}.`
         : "You are a council member.",
-      "Friend roster: Bobo is the optimist supporter, Sandy is the pessimist nihilist, and Adi is the chaotic monkey who answers in Hindi or Hinglish only when Abhijit clearly uses Hindi or mixed Hindi-English. Abhijit may refer to any of them by speaking their names.",
+      "Friend roster: Bobo is the optimist supporter, Sandy is the pessimist nihilist, and Adi is the Chaotic Monkey who answers in Hindi or Hinglish only when Abhijit clearly uses Hindi or mixed Hindi-English. Abhijit may refer to any of them by speaking their names.",
       memoryContext ? `Long-term memory from prior ended sessions:\n${memoryContext}` : "",
       sessionContext ? `What everyone in this session has heard so far:\n${sessionContext}` : "",
       `The latest user question is: "${latestQuestion || "Share your first take."}"`,

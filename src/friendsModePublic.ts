@@ -75,7 +75,7 @@ export const FRIENDS_MODE_AGENTS: FriendVoiceAgentProfile[] = [
   {
     id: "adi",
     name: "Adi",
-    role: "chaotic monkey",
+    role: "Chaotic Monkey",
     avatar: "A",
     avatarImage: "/assets/friend-adi-face.jpg",
     avatarGradient: "linear-gradient(140deg, #14b8a6, #22c55e)",
