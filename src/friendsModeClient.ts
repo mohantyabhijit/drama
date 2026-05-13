@@ -1,4 +1,4 @@
-import type { FriendsModeInitResponse } from "./friendsMode";
+import type { FriendsModeInitResponse } from "./friendsModePublic";
 
 export async function initializeFriendsMode(userId: string): Promise<FriendsModeInitResponse> {
   const response = await fetch("/api/friends-mode/init", {

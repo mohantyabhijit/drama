@@ -1,4 +1,4 @@
-import type { FriendVoiceAgentRuntime } from "./friendsMode";
+import type { FriendVoiceAgentRuntime } from "./friendsModePublic";
 
 export type VoicePreviewSession = {
   close: () => void;
@@ -7,6 +7,7 @@ export type VoicePreviewSession = {
 
 type StartVoicePreviewOptions = {
   openingLine?: string;
+  onConnectionStateChange?: (state: RTCPeerConnectionState | RTCIceConnectionState) => void;
   onServerEvent?: (event: Record<string, unknown>) => void;
 };
 
@@ -92,7 +93,13 @@ export async function startVoicePreviewSession(
 
   const peerConnection = new RTCPeerConnection();
   const dataChannel = peerConnection.createDataChannel("oai-events");
-  const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const localStream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      autoGainControl: true,
+      echoCancellation: true,
+      noiseSuppression: true,
+    },
+  });
   const remoteAudio = document.createElement("audio");
   remoteAudio.autoplay = true;
   remoteAudio.setAttribute("playsinline", "true");
@@ -125,6 +132,14 @@ export async function startVoicePreviewSession(
       peerConnection.addTrack(track, localStream);
     });
 
+    peerConnection.addEventListener("connectionstatechange", () => {
+      options.onConnectionStateChange?.(peerConnection.connectionState);
+    });
+
+    peerConnection.addEventListener("iceconnectionstatechange", () => {
+      options.onConnectionStateChange?.(peerConnection.iceConnectionState);
+    });
+
     peerConnection.ontrack = (event) => {
       const [stream] = event.streams;
       if (!stream) return;
@@ -140,6 +155,20 @@ export async function startVoicePreviewSession(
       const payload = parseJsonEvent(event.data);
       if (!payload) return;
       options.onServerEvent?.(payload);
+    });
+
+    const connectionFailed = new Promise<never>((_, reject) => {
+      const rejectIfFailed = () => {
+        if (
+          peerConnection.connectionState === "failed" ||
+          peerConnection.iceConnectionState === "failed"
+        ) {
+          reject(new Error("Realtime voice connection failed. Check microphone permission and network access."));
+        }
+      };
+
+      peerConnection.addEventListener("connectionstatechange", rejectIfFailed);
+      peerConnection.addEventListener("iceconnectionstatechange", rejectIfFailed);
     });
 
     const dataChannelReady = new Promise<void>((resolve, reject) => {
@@ -166,7 +195,7 @@ export async function startVoicePreviewSession(
       sdp: answerSdp,
     });
 
-    await dataChannelReady;
+    await Promise.race([dataChannelReady, connectionFailed]);
 
     if (options.openingLine) {
       dataChannel.send(JSON.stringify(buildUserTextEvent(options.openingLine)));

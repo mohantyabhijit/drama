@@ -120,6 +120,9 @@ async function createVoiceClientSecret(
       output_modalities: ["audio"],
       audio: {
         input: {
+          transcription: {
+            model: "gpt-4o-mini-transcribe",
+          },
           turn_detection: {
             type: "semantic_vad",
             eagerness: "medium",

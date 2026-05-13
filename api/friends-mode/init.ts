@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   FRIENDS_MODE_AGENTS,
+  FRIENDS_MODE_TRANSCRIPTION_MODEL,
   FRIENDS_MODE_VOICE_MODEL,
   type FriendVoiceAgentBlueprint,
   type FriendVoiceAgentRuntime,
@@ -110,6 +111,9 @@ async function createVoiceClientSecret(
       output_modalities: ["audio"],
       audio: {
         input: {
+          transcription: {
+            model: FRIENDS_MODE_TRANSCRIPTION_MODEL,
+          },
           turn_detection: {
             type: "semantic_vad",
             eagerness: "medium",

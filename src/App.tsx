@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   AudioLines,
   Headphones,
@@ -18,9 +18,10 @@ import {
 import {
   FRIENDS_MODE_AGENTS,
   getFriendDisplayName,
-  type FriendVoiceAgentBlueprint,
+  type FriendVoiceAgentRuntime,
+  type FriendVoiceAgentProfile,
   type FriendsModeInitResponse,
-} from "./friendsMode";
+} from "./friendsModePublic";
 import { initializeFriendsMode } from "./friendsModeClient";
 import {
   startVoicePreviewSession,
@@ -37,6 +38,19 @@ import {
 import type { DramaSession, LongTermMemory, SessionEvent } from "./sessionTypes";
 
 type FriendPrepState = "idle" | "thinking" | "ready";
+type TranscriptSpeakerType = "user" | "agent";
+
+type LiveTranscriptLine = {
+  key: string;
+  speakerType: TranscriptSpeakerType;
+  agentId: string | null;
+  content: string;
+  isFinal: boolean;
+};
+
+type LiveSubtitle = LiveTranscriptLine & {
+  speakerName: string;
+};
 
 type BrowserSpeechRecognition = {
   continuous: boolean;
@@ -80,6 +94,7 @@ type CouncilHomeProps = {
   sessions: DramaSession[];
   statusMessage: string | null;
   supportsVoicePromptInput: boolean;
+  liveTranscriptLines: LiveTranscriptLine[];
 };
 
 const FRIEND_THINK_DELAYS_MS = [760, 1080, 1360, 1660, 1960];
@@ -89,6 +104,31 @@ const USER_PARTICIPANT = {
   name: "You",
   role: "Original question",
 };
+
+const liveSubtitleStore = (() => {
+  let currentSubtitle: LiveSubtitle | null = null;
+  const listeners = new Set<() => void>();
+
+  return {
+    getSnapshot: () => currentSubtitle,
+    setSnapshot: (nextSubtitle: LiveSubtitle | null): void => {
+      currentSubtitle = nextSubtitle;
+      listeners.forEach((listener) => listener());
+    },
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+})();
+
+function useLiveSubtitle(): LiveSubtitle | null {
+  return useSyncExternalStore(
+    liveSubtitleStore.subscribe,
+    liveSubtitleStore.getSnapshot,
+    liveSubtitleStore.getSnapshot,
+  );
+}
 
 function getSessionSpeakerName(event: SessionEvent): string {
   if (event.speakerType === "agent") {
@@ -144,11 +184,16 @@ function App() {
   const [selectedSession, setSelectedSession] = useState<DramaSession | null>(null);
   const [sessionEvents, setSessionEvents] = useState<SessionEvent[]>([]);
   const [longTermMemories, setLongTermMemories] = useState<LongTermMemory[]>([]);
+  const [liveTranscriptLines, setLiveTranscriptLines] = useState<LiveTranscriptLine[]>([]);
   const [isSessionLoading, setIsSessionLoading] = useState(false);
   const [isEndingSession, setIsEndingSession] = useState(false);
   const voicePreviewRef = useRef<VoicePreviewSession | null>(null);
   const friendPrepTimersRef = useRef<number[]>([]);
   const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const liveTranscriptContentRef = useRef<Map<string, string>>(new Map());
+  const pendingLiveSubtitleRef = useRef<LiveTranscriptLine | null>(null);
+  const subtitleClearTimerRef = useRef<number | null>(null);
+  const subtitleFlushTimerRef = useRef<number | null>(null);
   const hasLoadedSessionsRef = useRef(false);
 
   const supportsVoicePromptInput = useMemo(() => {
@@ -163,6 +208,29 @@ function App() {
   const clearFriendPrepTimers = (): void => {
     friendPrepTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
     friendPrepTimersRef.current = [];
+  };
+
+  const clearSubtitleTimer = (): void => {
+    if (subtitleClearTimerRef.current) {
+      window.clearTimeout(subtitleClearTimerRef.current);
+      subtitleClearTimerRef.current = null;
+    }
+  };
+
+  const clearSubtitleFlushTimer = (): void => {
+    if (subtitleFlushTimerRef.current) {
+      window.clearTimeout(subtitleFlushTimerRef.current);
+      subtitleFlushTimerRef.current = null;
+    }
+  };
+
+  const clearLiveTranscriptionState = (): void => {
+    clearSubtitleTimer();
+    clearSubtitleFlushTimer();
+    pendingLiveSubtitleRef.current = null;
+    liveTranscriptContentRef.current.clear();
+    setLiveTranscriptLines([]);
+    liveSubtitleStore.setSnapshot(null);
   };
 
   const refreshSessions = async (preferredSessionId?: string): Promise<void> => {
@@ -217,6 +285,7 @@ function App() {
     voicePreviewRef.current?.close();
     voicePreviewRef.current = null;
     setActiveVoiceAgentId(null);
+    clearLiveTranscriptionState();
 
     try {
       const session = await createSession({ userId: friendsUserId });
@@ -238,6 +307,7 @@ function App() {
     voicePreviewRef.current?.close();
     voicePreviewRef.current = null;
     setActiveVoiceAgentId(null);
+    clearLiveTranscriptionState();
     setIsCouncilThinking(false);
     setPrepById(createFriendPrepMap());
 
@@ -293,6 +363,7 @@ function App() {
     voicePreviewRef.current?.close();
     voicePreviewRef.current = null;
     setActiveVoiceAgentId(null);
+    clearLiveTranscriptionState();
 
     try {
       const result = await endSession({
@@ -303,7 +374,7 @@ function App() {
       setSessionEvents(result.events);
       replaceSessionInList(result.session);
       setLongTermMemories(await listMemories(friendsUserId));
-      setFriendsStatusMessage("Session ended. Transcript, summaries, and audio recap are saved.");
+      setFriendsStatusMessage("Session ended. Transcript and text summaries are saved.");
     } catch (error) {
       setFriendsInitError(error instanceof Error ? error.message : "Failed to end session.");
     } finally {
@@ -312,7 +383,7 @@ function App() {
   };
 
   const buildSharedOpeningLine = (
-    blueprint: FriendVoiceAgentBlueprint | undefined,
+    blueprint: FriendVoiceAgentProfile | undefined,
     latestQuestion: string,
   ): string => {
     const memoryContext = longTermMemories
@@ -331,7 +402,7 @@ function App() {
       blueprint
         ? `You are ${blueprint.name}, the ${blueprint.role}.`
         : "You are a council member.",
-      "Friend roster: Bobo is the optimist supporter, Sandy is the pessimist nihilist, and Adi is the one-word chaos friend. Abhijit may refer to any of them by speaking their names.",
+      "Friend roster: Bobo is the optimist supporter, Sandy is the pessimist nihilist, and Adi is the chaotic monkey who answers in Hindi or Hinglish only when Abhijit clearly uses Hindi or mixed Hindi-English. Abhijit may refer to any of them by speaking their names.",
       memoryContext ? `Long-term memory from prior ended sessions:\n${memoryContext}` : "",
       sessionContext ? `What everyone in this session has heard so far:\n${sessionContext}` : "",
       `The latest user question is: "${latestQuestion || "Share your first take."}"`,
@@ -341,33 +412,200 @@ function App() {
       .join("\n\n");
   };
 
-  const captureRealtimeTranscript = (agentId: string, event: Record<string, unknown>): void => {
-    const type = typeof event.type === "string" ? event.type : "";
-    if (!type.includes("transcript") || !type.endsWith(".done")) {
+  const getRealtimeTranscriptKey = (
+    speakerType: TranscriptSpeakerType,
+    event: Record<string, unknown>,
+  ): string => {
+    const itemId = typeof event.item_id === "string" ? event.item_id : "";
+    const responseId = typeof event.response_id === "string" ? event.response_id : "";
+    const outputIndex =
+      typeof event.output_index === "number" ? String(event.output_index) : "";
+    const contentIndex =
+      typeof event.content_index === "number" ? String(event.content_index) : "";
+    const stableId = [responseId, itemId, outputIndex, contentIndex].filter(Boolean).join(":");
+    return `${speakerType}:${stableId || "current"}`;
+  };
+
+  const getTranscriptSpeakerName = (
+    speakerType: TranscriptSpeakerType,
+    agentId: string | null,
+  ): string => {
+    return speakerType === "agent" ? getFriendDisplayName(agentId) : USER_PARTICIPANT.name;
+  };
+
+  const applyLiveSubtitle = (line: LiveTranscriptLine): void => {
+    clearSubtitleTimer();
+    liveSubtitleStore.setSnapshot({
+      ...line,
+      speakerName: getTranscriptSpeakerName(line.speakerType, line.agentId),
+    });
+
+    if (line.isFinal) {
+      subtitleClearTimerRef.current = window.setTimeout(() => {
+        if (liveSubtitleStore.getSnapshot()?.key === line.key) {
+          liveSubtitleStore.setSnapshot(null);
+        }
+        subtitleClearTimerRef.current = null;
+      }, 5200);
+    }
+  };
+
+  const showLiveSubtitle = (line: LiveTranscriptLine, shouldFlushImmediately = false): void => {
+    if (line.isFinal || shouldFlushImmediately) {
+      clearSubtitleFlushTimer();
+      pendingLiveSubtitleRef.current = null;
+      applyLiveSubtitle(line);
       return;
     }
 
-    const transcript =
-      typeof event.transcript === "string"
-        ? event.transcript
-        : typeof event.text === "string"
-          ? event.text
-          : null;
+    pendingLiveSubtitleRef.current = line;
+    if (subtitleFlushTimerRef.current) {
+      return;
+    }
 
-    if (!transcript || !selectedSession || selectedSession.status !== "active") {
+    subtitleFlushTimerRef.current = window.setTimeout(() => {
+      const pending = pendingLiveSubtitleRef.current;
+      pendingLiveSubtitleRef.current = null;
+      subtitleFlushTimerRef.current = null;
+      if (pending) {
+        applyLiveSubtitle(pending);
+      }
+    }, 90);
+  };
+
+  const updateLiveTranscriptLine = (line: LiveTranscriptLine): void => {
+    setLiveTranscriptLines((current) => {
+      const existingIndex = current.findIndex((item) => item.key === line.key);
+      if (existingIndex === -1) {
+        return [...current, line];
+      }
+
+      const next = [...current];
+      const existing = next[existingIndex];
+      next[existingIndex] = {
+        ...existing,
+        ...line,
+      };
+      return next;
+    });
+  };
+
+  const removeLiveTranscriptLine = (key: string): void => {
+    liveTranscriptContentRef.current.delete(key);
+    setLiveTranscriptLines((current) => current.filter((line) => line.key !== key));
+  };
+
+  const extractRealtimeTranscript = (event: Record<string, unknown>): string | null => {
+    if (typeof event.transcript === "string") return event.transcript;
+    if (typeof event.text === "string") return event.text;
+    if (typeof event.delta === "string") return event.delta;
+
+    const item = event.item;
+    if (!item || typeof item !== "object" || !("content" in item)) {
+      return null;
+    }
+
+    const content = (item as { content?: unknown }).content;
+    if (!Array.isArray(content)) {
+      return null;
+    }
+
+    for (const part of content) {
+      if (!part || typeof part !== "object") {
+        continue;
+      }
+
+      const transcript = (part as { transcript?: unknown; text?: unknown }).transcript;
+      if (typeof transcript === "string" && transcript.trim()) {
+        return transcript;
+      }
+
+      const text = (part as { transcript?: unknown; text?: unknown }).text;
+      if (typeof text === "string" && text.trim()) {
+        return text;
+      }
+    }
+
+    return null;
+  };
+
+  const captureRealtimeTranscript = (agentId: string, event: Record<string, unknown>): void => {
+    const type = typeof event.type === "string" ? event.type : "";
+    const item =
+      event.item && typeof event.item === "object"
+        ? (event.item as { role?: unknown })
+        : null;
+    const isUserSpeechMarker = type === "input_audio_buffer.speech_started";
+    const isUserTranscript =
+      type.startsWith("conversation.item.input_audio_transcription.") ||
+      (type === "conversation.item.retrieved" && item?.role === "user");
+    const isAgentTranscript =
+      type.startsWith("response.output_audio_transcript.") ||
+      type.startsWith("response.audio_transcript.");
+    const isDelta = type.endsWith(".delta");
+    const isFinal =
+      type.endsWith(".done") ||
+      type.endsWith(".completed") ||
+      type === "conversation.item.retrieved";
+
+    if (isUserSpeechMarker) {
+      showLiveSubtitle({
+        key: "user:listening",
+        speakerType: "user",
+        agentId: null,
+        content: "Listening...",
+        isFinal: false,
+      }, true);
+      return;
+    }
+
+    if ((!isUserTranscript && !isAgentTranscript) || (!isDelta && !isFinal)) {
+      return;
+    }
+
+    const transcript = extractRealtimeTranscript(event);
+
+    const normalizedTranscript = transcript?.trim();
+    if (!normalizedTranscript) {
+      return;
+    }
+
+    const speakerType: TranscriptSpeakerType = isAgentTranscript ? "agent" : "user";
+    const key = getRealtimeTranscriptKey(speakerType, event);
+    const existingTranscript = liveTranscriptContentRef.current.get(key) ?? "";
+    const fullTranscript = isDelta
+      ? `${existingTranscript}${transcript}`.trimStart()
+      : normalizedTranscript;
+    const finalTranscript = fullTranscript.trim();
+    const line: LiveTranscriptLine = {
+      key,
+      speakerType,
+      agentId: speakerType === "agent" ? agentId : null,
+      content: finalTranscript,
+      isFinal,
+    };
+
+    liveTranscriptContentRef.current.set(key, finalTranscript);
+    if (isFinal) {
+      updateLiveTranscriptLine(line);
+    }
+    showLiveSubtitle(line);
+
+    if (!isFinal || !selectedSession || selectedSession.status !== "active") {
       return;
     }
 
     void appendSessionEvent({
       userId: friendsUserId,
       sessionId: selectedSession.id,
-      speakerType: type.startsWith("response.") ? "agent" : "user",
-      agentId: type.startsWith("response.") ? agentId : null,
-      content: transcript,
+      speakerType,
+      agentId: speakerType === "agent" ? agentId : null,
+      content: finalTranscript,
       metadata: { realtimeEventType: type },
     })
       .then((savedEvent) => {
         setSessionEvents((current) => [...current, savedEvent]);
+        removeLiveTranscriptLine(key);
       })
       .catch(() => {
         // Keep the live voice session running even if transcript persistence fails.
@@ -379,6 +617,7 @@ function App() {
     voicePreviewRef.current?.close();
     voicePreviewRef.current = null;
     setActiveVoiceAgentId(null);
+    clearLiveTranscriptionState();
     setIsCouncilThinking(false);
     setPrepById(createFriendPrepMap());
     setFriendsInitLoading(true);
@@ -559,6 +798,22 @@ function App() {
     speechRecognitionRef.current?.stop();
   };
 
+  const getFreshVoiceRuntime = async (agentId: string): Promise<FriendVoiceAgentRuntime | null> => {
+    setFriendsStatusMessage("Preparing a fresh voice connection...");
+
+    try {
+      const payload = await initializeFriendsMode(friendsUserId);
+      setFriendsInit(payload);
+      return payload.agents.find((agent) => agent.id === agentId) ?? null;
+    } catch (error) {
+      setFriendsInitError(
+        error instanceof Error ? error.message : "Failed to prepare live voice.",
+      );
+      setFriendsStatusMessage(null);
+      return null;
+    }
+  };
+
   const handlePreviewVoice = async (agentId: string) => {
     if (!selectedSession || selectedSession.status !== "active") {
       setFriendsInitError("Start an active talk before speaking with a council member.");
@@ -578,7 +833,8 @@ function App() {
       return;
     }
 
-    const runtime = friendsInit.agents.find((agent) => agent.id === agentId);
+    const runtime = await getFreshVoiceRuntime(agentId);
+
     if (!runtime) {
       setFriendsInitError("This council member is not ready yet.");
       setFriendsStatusMessage(null);
@@ -602,6 +858,14 @@ function App() {
     try {
       const session = await startVoicePreviewSession(runtime, {
         openingLine,
+        onConnectionStateChange: (state) => {
+          if (state === "failed" || state === "disconnected") {
+            setFriendsInitError(
+              "Live voice disconnected. Check microphone permission and try the member again.",
+            );
+            setFriendsStatusMessage(null);
+          }
+        },
         onServerEvent: (event) => {
           if (event.type === "error") {
             const message =
@@ -638,6 +902,44 @@ function App() {
   };
 
   useEffect(() => {
+    if (!import.meta.env.DEV) {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const proofMode = params.get("subtitleProof");
+    if (!proofMode) {
+      return;
+    }
+
+    const timerId = window.setTimeout(() => {
+      if (proofMode === "user") {
+        captureRealtimeTranscript("bobo", {
+          type: "input_audio_buffer.speech_started",
+        });
+        window.setTimeout(() => {
+          captureRealtimeTranscript("bobo", {
+            type: "conversation.item.input_audio_transcription.completed",
+            item_id: "proof-user-input",
+            transcript: "Proof: your spoken words are rendered as a subtitle.",
+          });
+        }, 220);
+        return;
+      }
+
+      captureRealtimeTranscript("bobo", {
+        type: "response.audio_transcript.delta",
+        response_id: "proof-response",
+        output_index: 0,
+        content_index: 0,
+        delta: "Proof: Bobo's live model transcript is rendered as a subtitle.",
+      });
+    }, 300);
+
+    return () => window.clearTimeout(timerId);
+  }, []);
+
+  useEffect(() => {
     if (hasLoadedSessionsRef.current) {
       return;
     }
@@ -649,10 +951,13 @@ function App() {
   useEffect(() => {
     return () => {
       clearFriendPrepTimers();
+      clearSubtitleFlushTimer();
+      pendingLiveSubtitleRef.current = null;
       speechRecognitionRef.current?.stop();
       speechRecognitionRef.current = null;
       voicePreviewRef.current?.close();
       voicePreviewRef.current = null;
+      clearSubtitleTimer();
     };
   }, []);
 
@@ -683,6 +988,7 @@ function App() {
         sessions={sessions}
         statusMessage={friendsStatusMessage}
         supportsVoicePromptInput={supportsVoicePromptInput}
+        liveTranscriptLines={liveTranscriptLines}
       />
     </div>
   );
@@ -713,6 +1019,7 @@ function CouncilHome({
   sessions,
   statusMessage,
   supportsVoicePromptInput,
+  liveTranscriptLines,
 }: CouncilHomeProps) {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isHistoryMounted, setIsHistoryMounted] = useState(false);
@@ -834,48 +1141,54 @@ function CouncilHome({
         {isViewingArchive ? (
           <ArchiveSessionDetail events={events} session={selectedSession} />
         ) : (
-          <>
-            <div className="home-intro">
-              <h2 className="home-title" id="home-title">
-                Talk to your council of closest friends.
-              </h2>
-              <p className="home-subtitle">Decision Review by Artificial Moronic Advisors</p>
-            </div>
+          <div className="live-meeting-layout">
+            <section className="live-stage" aria-label="Live voice stage">
+              <div className="home-intro">
+                <h2 className="home-title" id="home-title">
+                  Talk to your council of closest friends.
+                </h2>
+                <p className="home-subtitle">Decision Review by Artificial Moronic Advisors</p>
+              </div>
 
-            <CouncilPhotoRow
-              activeVoiceAgentId={activeVoiceAgentId}
-              isArchived={false}
-              isConnectingVoice={isConnectingVoice}
-              onEndLiveSession={onEndLiveSession}
-              onPreviewVoice={onPreviewVoice}
-              prepById={prepById}
-            />
+              <CouncilPhotoRow
+                activeVoiceAgentId={activeVoiceAgentId}
+                isArchived={false}
+                isConnectingVoice={isConnectingVoice}
+                onEndLiveSession={onEndLiveSession}
+                onPreviewVoice={onPreviewVoice}
+                prepById={prepById}
+              />
 
-            <PromptComposer
-              activeVoiceAgentId={activeVoiceAgentId}
-              isArchived={false}
-              isCouncilThinking={isCouncilThinking}
-              isEndingSession={isEndingSession}
-              isLoading={isLoading || isSessionLoading}
-              isPromptRecording={isPromptRecording}
-              onAskQuestion={onAskQuestion}
-              onEndLiveSession={onEndLiveSession}
-              onEndSession={onEndSession}
-              onQuestionChange={onQuestionChange}
-              onStartVoicePrompt={onStartVoicePrompt}
-              onStopVoicePrompt={onStopVoicePrompt}
-              question={question}
-              selectedSession={selectedSession}
-              supportsVoicePromptInput={supportsVoicePromptInput}
-            />
+              <PromptComposer
+                activeVoiceAgentId={activeVoiceAgentId}
+                isArchived={false}
+                isCouncilThinking={isCouncilThinking}
+                isEndingSession={isEndingSession}
+                isLoading={isLoading || isSessionLoading}
+                isPromptRecording={isPromptRecording}
+                onAskQuestion={onAskQuestion}
+                onEndLiveSession={onEndLiveSession}
+                onEndSession={onEndSession}
+                onQuestionChange={onQuestionChange}
+                onStartVoicePrompt={onStartVoicePrompt}
+                onStopVoicePrompt={onStopVoicePrompt}
+                question={question}
+                selectedSession={selectedSession}
+                supportsVoicePromptInput={supportsVoicePromptInput}
+              />
 
-            <div className={`status-note ${error ? "error" : ""}`} role={error ? "alert" : "status"}>
-              {error || statusMessage || fallbackStatus}
-            </div>
+              <div
+                className={`status-note ${error ? "error" : ""}`}
+                role={error ? "alert" : "status"}
+              >
+                {error || statusMessage || fallbackStatus}
+              </div>
 
-            <SessionTranscript events={events} session={selectedSession} />
+              <LiveSubtitleOverlay />
+            </section>
 
-          </>
+            <LiveTranscriptPanel activeVoiceAgentId={activeVoiceAgentId} />
+          </div>
         )}
       </section>
     </main>
@@ -973,6 +1286,94 @@ function SessionSidebar({
   );
 }
 
+const CHINESE_FEMALE_VOICE_HINTS = [
+  "ting-ting",
+  "tingting",
+  "xiaoxiao",
+  "xiaoyi",
+  "yaoyao",
+  "huihui",
+  "meijia",
+  "mei-jia",
+  "sinji",
+  "sin-ji",
+];
+
+function getSummaryVoices(): SpeechSynthesisVoice[] {
+  if (!("speechSynthesis" in window)) {
+    return [];
+  }
+
+  return window.speechSynthesis.getVoices();
+}
+
+function waitForSummaryVoices(): Promise<SpeechSynthesisVoice[]> {
+  const voices = getSummaryVoices();
+  if (voices.length || !("speechSynthesis" in window)) {
+    return Promise.resolve(voices);
+  }
+
+  return new Promise((resolve) => {
+    const synthesis = window.speechSynthesis;
+    const finish = (): void => {
+      window.clearTimeout(timeoutId);
+      synthesis.removeEventListener("voiceschanged", finish);
+      resolve(synthesis.getVoices());
+    };
+    const timeoutId = window.setTimeout(finish, 300);
+    synthesis.addEventListener("voiceschanged", finish);
+  });
+}
+
+function getPreferredSummaryVoice(
+  lang: string,
+  voices: SpeechSynthesisVoice[],
+): SpeechSynthesisVoice | null {
+  if (!voices.length) {
+    return null;
+  }
+
+  const languagePrefix = lang.toLowerCase().split("-")[0];
+  const languageVoices = voices.filter((voice) =>
+    voice.lang.toLowerCase().startsWith(languagePrefix),
+  );
+  if (!languageVoices.length) {
+    return null;
+  }
+
+  if (languagePrefix === "zh") {
+    const preferredChineseVoice = languageVoices.find((voice) => {
+      const normalizedName = voice.name.toLowerCase().replace(/\s+/g, "");
+      return CHINESE_FEMALE_VOICE_HINTS.some((hint) => normalizedName.includes(hint));
+    });
+
+    return preferredChineseVoice ?? languageVoices[0];
+  }
+
+  return (
+    languageVoices.find((voice) => voice.lang.toLowerCase() === lang.toLowerCase()) ??
+    languageVoices[0]
+  );
+}
+
+function tuneSummaryUtterance(
+  utterance: SpeechSynthesisUtterance,
+  lang: string,
+  voices: SpeechSynthesisVoice[],
+): void {
+  utterance.lang = lang;
+
+  if (lang.toLowerCase().startsWith("zh")) {
+    utterance.rate = 0.72;
+    utterance.pitch = 1.08;
+    utterance.volume = 0.92;
+    utterance.voice = getPreferredSummaryVoice(lang, voices);
+    return;
+  }
+
+  utterance.voice = getPreferredSummaryVoice(lang, voices);
+}
+
 function ArchiveSessionDetail({
   events,
   session,
@@ -994,7 +1395,11 @@ function ArchiveSessionDetail({
       })
     : "Saved";
 
-  const speakSummary = (text: string | null, lang: string, speechId: string): void => {
+  const speakSummary = async (
+    text: string | null,
+    lang: string,
+    speechId: string,
+  ): Promise<void> => {
     if (!text?.trim() || !("speechSynthesis" in window)) {
       return;
     }
@@ -1002,8 +1407,13 @@ function ArchiveSessionDetail({
     const runId = speechRunIdRef.current + 1;
     speechRunIdRef.current = runId;
     window.speechSynthesis.cancel();
+    const voices = await waitForSummaryVoices();
+    if (speechRunIdRef.current !== runId) {
+      return;
+    }
+
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = lang;
+    tuneSummaryUtterance(utterance, lang, voices);
     utterance.onend = () => {
       if (speechRunIdRef.current === runId) {
         setActiveSpeechId(null);
@@ -1038,7 +1448,7 @@ function ArchiveSessionDetail({
       return;
     }
 
-    speakSummary(text, lang, speechId);
+    void speakSummary(text, lang, speechId);
   };
 
   const pauseSpeech = (): void => {
@@ -1141,7 +1551,15 @@ function ArchiveSessionDetail({
             {participantAgents.map((agent) => (
               <div className="participant-row" key={agent.id}>
                 <span className="friends-avatar">
-                  <img src={agent.avatarImage} alt="" aria-hidden="true" />
+                  <img
+                    src={agent.avatarImage}
+                    alt=""
+                    width="96"
+                    height="96"
+                    loading="lazy"
+                    decoding="async"
+                    aria-hidden="true"
+                  />
                 </span>
                 <span>
                   <strong>{agent.name}</strong>
@@ -1185,38 +1603,61 @@ function ArchiveSessionDetail({
   );
 }
 
-function SessionTranscript({
-  events,
-  session,
+function LiveTranscriptPanel({
+  activeVoiceAgentId,
 }: {
-  events: SessionEvent[];
-  session: DramaSession | null;
+  activeVoiceAgentId: string | null;
 }) {
-  const visibleEvents = events.slice(-5);
+  const currentTranscript = useLiveSubtitle();
+  const currentSpeakerName = currentTranscript
+    ? currentTranscript.speakerName
+    : activeVoiceAgentId
+      ? getFriendDisplayName(activeVoiceAgentId)
+      : null;
 
-  if (events.length === 0 && !session?.summaryEnglish) {
+  return (
+    <section
+      className="live-transcript-panel"
+      aria-label="Current speaker transcript"
+    >
+      <div className="live-transcript-header">
+        <strong>{currentSpeakerName ?? "Transcript"}</strong>
+        <small>{currentTranscript ? "Speaking" : "Live"}</small>
+      </div>
+
+      <div className="live-transcript-list">
+        {currentTranscript ? (
+          <article className={`transcript-event ${currentTranscript.speakerType}`}>
+            <p>{currentTranscript.content}</p>
+          </article>
+        ) : (
+          <p className="live-transcript-empty">
+            {activeVoiceAgentId ? "Waiting for speech..." : "Start live voice."}
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function LiveSubtitleOverlay() {
+  const subtitle = useLiveSubtitle();
+
+  if (!subtitle) {
     return null;
   }
 
   return (
-    <section
-      className="session-transcript"
-      aria-label="Shared session context"
+    <aside
+      className={`live-subtitle-overlay ${subtitle.speakerType} ${
+        subtitle.isFinal ? "is-final" : "is-live"
+      }`}
+      aria-live="polite"
+      aria-label="Live subtitle"
     >
-      <div className="session-transcript-header">
-        <strong>Shared room context</strong>
-        <small>{events.length} saved turn{events.length === 1 ? "" : "s"}</small>
-      </div>
-
-      <div className="session-transcript-list">
-        {visibleEvents.map((event) => (
-          <article className={`transcript-event ${event.speakerType}`} key={event.id}>
-            <strong>{getSessionSpeakerName(event)}</strong>
-            <p>{event.content}</p>
-          </article>
-        ))}
-      </div>
-    </section>
+      <strong>{subtitle.speakerName}</strong>
+      <p>{subtitle.content}</p>
+    </aside>
   );
 }
 
@@ -1256,7 +1697,14 @@ function CouncilPhotoRow({
               aria-label={`${agent.name}, ${agent.role}, ${statusLabel}`}
             >
               <span className="portrait-wrap">
-                <img src={agent.avatarImage} alt="" aria-hidden="true" />
+                <img
+                  src={agent.avatarImage}
+                  alt=""
+                  width="192"
+                  height="192"
+                  decoding="async"
+                  aria-hidden="true"
+                />
                 <span className="status-orbit" aria-hidden="true"></span>
               </span>
               <span className="member-copy">

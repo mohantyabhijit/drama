@@ -12,7 +12,7 @@ You ask a question, choose a friend-style AI advisor, speak live, review the con
 - Runs a friend council with opinionated AI personas such as Bobo, Sandy, and Adi.
 - Starts realtime voice previews through OpenAI Realtime sessions.
 - Captures live transcript lines from user and agent turns.
-- Stores sessions, events, summaries, and long-term memories.
+- Stores sessions, transcript events, text summaries, and long-term memories without keeping voice recordings.
 - Supports voice prompt input in browsers with Speech Recognition support.
 - Provides a polished prototype surface for demos, product critique, and roadmap conversations.
 
@@ -24,7 +24,7 @@ You ask a question, choose a friend-style AI advisor, speak live, review the con
 - **Speech input:** Browser Speech Recognition / `webkitSpeechRecognition`
 - **Backend:** Vercel serverless API routes using Node.js request handlers
 - **Database:** Neon serverless Postgres via `@neondatabase/serverless`
-- **Persistence:** Sessions, session events, multilingual summaries, audio summaries, and long-term memories
+- **Persistence:** Sessions, transcript events, multilingual text summaries, and long-term memories
 - **Deployment:** Vercel
 
 ## Local Development

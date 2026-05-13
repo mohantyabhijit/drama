@@ -19,8 +19,6 @@ export type DramaSession = {
   summaryEnglish: string | null;
   summaryChinese: string | null;
   summaryHindi: string | null;
-  summaryAudioMime: string | null;
-  summaryAudioBase64: string | null;
   summaryGeneratedAt: string | null;
 };
 
@@ -62,8 +60,6 @@ type SessionRow = {
   summary_english: string | null;
   summary_chinese: string | null;
   summary_hindi: string | null;
-  summary_audio_mime: string | null;
-  summary_audio_base64: string | null;
   summary_generated_at: string | Date | null;
 };
 
@@ -122,8 +118,6 @@ function mapSession(row: SessionRow): DramaSession {
     summaryEnglish: row.summary_english,
     summaryChinese: row.summary_chinese,
     summaryHindi: row.summary_hindi,
-    summaryAudioMime: row.summary_audio_mime,
-    summaryAudioBase64: row.summary_audio_base64,
     summaryGeneratedAt: row.summary_generated_at ? toIso(row.summary_generated_at) : null,
   };
 }
@@ -208,9 +202,9 @@ export async function ensureSessionSchema(): Promise<void> {
       await sql`alter table sessions add column if not exists summary_english text`;
       await sql`alter table sessions add column if not exists summary_chinese text`;
       await sql`alter table sessions add column if not exists summary_hindi text`;
-      await sql`alter table sessions add column if not exists summary_audio_mime text`;
-      await sql`alter table sessions add column if not exists summary_audio_base64 text`;
       await sql`alter table sessions add column if not exists summary_generated_at timestamptz`;
+      await sql`alter table sessions drop column if exists summary_audio_mime`;
+      await sql`alter table sessions drop column if exists summary_audio_base64`;
       await sql`
         create table if not exists session_events (
           id uuid primary key default gen_random_uuid(),
@@ -374,43 +368,10 @@ async function generateTextWithOpenAi(input: {
   return text;
 }
 
-async function generateSpeechWithOpenAi(input: {
-  apiKey: string;
-  text: string;
-}): Promise<{ mime: string; base64: string }> {
-  const response = await fetch("https://api.openai.com/v1/audio/speech", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${input.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-4o-mini-tts",
-      voice: "coral",
-      input: input.text.slice(0, 3800),
-      instructions: "Speak clearly and warmly, like a concise meeting recap.",
-      response_format: "mp3",
-    }),
-  });
-
-  if (!response.ok) {
-    const message = await response.text().catch(() => "");
-    throw new Error(message || `OpenAI speech request failed with ${response.status}.`);
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
-  return {
-    mime: response.headers.get("content-type") || "audio/mpeg",
-    base64: Buffer.from(arrayBuffer).toString("base64"),
-  };
-}
-
 async function generateSessionArtifacts(events: SessionEvent[]): Promise<{
   summaryEnglish: string;
   summaryChinese: string;
   summaryHindi: string;
-  audioMime: string | null;
-  audioBase64: string | null;
 }> {
   const fallbackSummary = summarizeSession(events);
   const transcript = formatTranscript(events);
@@ -421,8 +382,6 @@ async function generateSessionArtifacts(events: SessionEvent[]): Promise<{
       summaryEnglish: fallbackSummary,
       summaryChinese: "",
       summaryHindi: "",
-      audioMime: null,
-      audioBase64: null,
     };
   }
 
@@ -433,7 +392,7 @@ async function generateSessionArtifacts(events: SessionEvent[]): Promise<{
     prompt: `Summarize this session in English as big readable paragraphs, not bullet points.\n\nTranscript:\n${transcript.slice(0, 12000)}`,
   });
 
-  const [summaryChinese, summaryHindi, audio] = await Promise.all([
+  const [summaryChinese, summaryHindi] = await Promise.all([
     generateTextWithOpenAi({
       apiKey,
       instructions:
@@ -446,15 +405,12 @@ async function generateSessionArtifacts(events: SessionEvent[]): Promise<{
         "Translate the supplied English session summary into Hindi. Preserve names, product names, and paragraph structure. Do not add new information.",
       prompt: summaryEnglish,
     }),
-    generateSpeechWithOpenAi({ apiKey, text: summaryEnglish }),
   ]);
 
   return {
     summaryEnglish,
     summaryChinese,
     summaryHindi,
-    audioMime: audio.mime,
-    audioBase64: audio.base64,
   };
 }
 
@@ -462,7 +418,20 @@ export async function listSessions(userId: string): Promise<DramaSession[]> {
   await ensureSessionSchema();
   const sql = getSql();
   const rows = (await sql`
-    select *
+    select
+      id,
+      user_id,
+      title,
+      original_question,
+      status,
+      created_at,
+      updated_at,
+      ended_at,
+      memory_summary,
+      null::text as summary_english,
+      null::text as summary_chinese,
+      null::text as summary_hindi,
+      summary_generated_at
     from sessions
     where user_id = ${userId}
     order by updated_at desc
@@ -631,8 +600,6 @@ export async function endSession(input: {
         summary_english = ${artifacts.summaryEnglish},
         summary_chinese = ${artifacts.summaryChinese || null},
         summary_hindi = ${artifacts.summaryHindi || null},
-        summary_audio_mime = ${artifacts.audioMime},
-        summary_audio_base64 = ${artifacts.audioBase64},
         summary_generated_at = now()
     where id = ${input.sessionId} and user_id = ${input.userId}
     returning *
